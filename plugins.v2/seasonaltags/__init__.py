@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import pytz
 from dataclasses import dataclass
 
+import threading
+
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
 from app.plugins import _PluginBase
