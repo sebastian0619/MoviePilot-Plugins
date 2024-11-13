@@ -13,8 +13,8 @@
     }
   },
   "SeasonalTags": {
-    "name": "季度番剧标签",
-    "description": "自动为动漫添加季度标签（例：2024年10月番）",
+    "name": "Emby季度番剧标签",
+    "description": "自动为Emby的动漫库添加季度标签（例：2024年10月番）",
     "labels": "媒体库",
     "version": "1.2",
     "icon": "emby.png",
