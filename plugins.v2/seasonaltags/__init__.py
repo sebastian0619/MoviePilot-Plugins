@@ -24,8 +24,8 @@ from app.utils.http import RequestUtils
 
 class SeasonalTags(_PluginBase):
     # 插件基础信息
-    plugin_name = "季度番剧标签"
-    plugin_desc = "自动为动漫添加季度标签（例：2024年10月番）"
+    plugin_name = "EMBY季度番剧标签"
+    plugin_desc = "自动为EMBY的动漫媒体库添加季度标签（例：2024年10月番）"
     plugin_version = "1.0"
     plugin_author = "Sebas0619"
     plugin_config_prefix = "seasonaltags_"
@@ -69,18 +69,8 @@ class SeasonalTags(_PluginBase):
             # 立即运行
             if self._onlyonce:
                 logger.info(f"季度标签服务启动，立即运行一次...")
-                # 创建定时任务
-                self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                self._scheduler.add_job(func=self.process_seasonal_tags,
-                                      trigger='date',
-                                      run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                      name="季度标签")
-                # 启动任务
-                if self._scheduler.get_jobs():
-                    self._scheduler.print_jobs()
-                    self._scheduler.start()
-                    logger.info("立即运行任务已启动")
-                
+                # 直接运行一次
+                self.process_seasonal_tags()
                 # 关闭一次性开关
                 self._onlyonce = False
                 # 保存配置
@@ -114,13 +104,12 @@ class SeasonalTags(_PluginBase):
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
-        拼装插件配置页面
+        插件配置页面
         """
         return [
             {
                 "component": "VForm",
                 "content": [
-                    # 启用开关和立即运行开关
                     {
                         'component': 'VRow',
                         'content': [
@@ -158,7 +147,6 @@ class SeasonalTags(_PluginBase):
                             }
                         ]
                     },
-                    # Cron表达式
                     {
                         'component': 'VRow',
                         'content': [
@@ -173,14 +161,13 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'model': 'cron',
                                             'label': '执行周期',
-                                            'placeholder': '5位cron表达式，如：0 0 * * *'
+                                            'placeholder': '5位cron表达式，留空自动'
                                         }
                                     }
                                 ]
                             }
                         ]
                     },
-                    # 媒体服务器选择
                     {
                         'component': 'VRow',
                         'content': [
@@ -193,19 +180,20 @@ class SeasonalTags(_PluginBase):
                                     {
                                         'component': 'VSelect',
                                         'props': {
-                                            'model': 'mediaserver',
+                                            'multiple': True,
+                                            'chips': True,
+                                            'clearable': True,
+                                            'model': 'mediaservers',
                                             'label': '媒体服务器',
                                             'items': [{"title": config.name, "value": config.name}
-                                                     for config in self.mediaserver_helper.get_configs().values() 
-                                                     if config.type == "emby"],
-                                            'clearable': True
+                                                      for config in self.mediaserver_helper.get_configs().values() if
+                                                      config.type == "emby"]
                                         }
                                     }
                                 ]
                             }
                         ]
                     },
-                    # 媒体库输入框
                     {
                         'component': 'VRow',
                         'content': [
@@ -218,56 +206,10 @@ class SeasonalTags(_PluginBase):
                                     {
                                         'component': 'VTextarea',
                                         'props': {
-                                            'model': 'library_text',
-                                            'label': '媒体库名称',
-                                            'placeholder': '每行输入一个媒体库名称',
-                                            'rows': 3,
-                                            'persistent-placeholder': True,
-                                            'hide-details': False,
-                                            'disabled': False
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    # 说明文本
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VAlert',
-                                        'props': {
-                                            'type': 'info',
-                                            'variant': 'tonal',
-                                            'text': '选择媒体服务器后，输入需要添加季度标签的媒体库名称，每行一个。将根据剧集的首播时间自动添加对应季度标签。'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
                                             'model': 'target_libraries',
                                             'label': '目标媒体库',
-                                            'placeholder': '媒体库名称，多个用英文逗号分隔'
+                                            'placeholder': '输入一个媒体库名称，多个媒体库的用英文逗号隔开',
+                                            'rows': 2,
                                         }
                                     }
                                 ]
@@ -280,9 +222,8 @@ class SeasonalTags(_PluginBase):
             "enabled": False,
             "onlyonce": False,
             "cron": "5 1 * * *",
-            "mediaserver": None,
-            "library_text": "",
-            "target_libraries": ""
+            "target_libraries": "",
+            "mediaservers": []
         }
 
     def __get_air_date(self, tmdb_id: int) -> str:
@@ -446,7 +387,7 @@ class SeasonalTags(_PluginBase):
 
     def _calculate_season_tag(self, server, item) -> Optional[str]:
         """
-        计算季度标签
+        计算季度标���
         """
         try:
             # 获取TMDB ID
@@ -819,3 +760,51 @@ class SeasonalTags(_PluginBase):
         except Exception as e:
             logger.error(f"更新标签失败：{str(e)}")
             return False
+
+    def _update_series_tags(self, server_info, item, mediainfo):
+        """
+        更新剧集的季度标签
+        """
+        try:
+            # 获取所有季
+            seasons = server_info.instance.get_seasons(item.item_id)
+            if not seasons:
+                return
+            
+            # 获取当前剧集的标签
+            series_tags = self._get_item_tags(server_info.instance, item.item_id)
+            
+            for season in seasons:
+                # 获取季的首播日期
+                season_info = self.chain.recognize_media(
+                    mtype=MediaType.TV,
+                    tmdbid=season.tmdbid
+                )
+                if not season_info:
+                    continue
+                    
+                air_date = season_info.release_date or season_info.first_air_date
+                if not air_date:
+                    continue
+                    
+                # 生成季度���签
+                season_tag = self._get_season_tag(air_date)
+                if not season_tag:
+                    continue
+                    
+                # 为季添加标签
+                season_tags = self._get_item_tags(server_info.instance, season.item_id)
+                if season_tag not in season_tags:
+                    if self._update_item_tags(self._mediaserver, server_info.type,
+                                            season.item_id, season_tags, season_tag):
+                        logger.info(f"为 {item.title} 第{season.index}季 添加标签：{season_tag}")
+                    
+                # 为整个剧集添加标签
+                if season_tag not in series_tags:
+                    if self._update_item_tags(self._mediaserver, server_info.type,
+                                            item.item_id, series_tags, season_tag):
+                        logger.info(f"为 {item.title} 添加标签：{season_tag}")
+                        series_tags.append(season_tag)
+                    
+        except Exception as e:
+            logger.error(f"更新剧集标签失败：{str(e)}")
