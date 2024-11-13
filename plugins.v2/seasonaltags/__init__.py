@@ -21,13 +21,15 @@ from app.chain.mediaserver import MediaServerChain
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from app.utils.http import RequestUtils
+from app.schemas import NotificationType
+
 
 class SeasonalTags(_PluginBase):
     # 插件基础信息
     plugin_name = "Emby季度番剧标签"
     plugin_desc = "自动为Emby的动漫库添加季度标签（例：2024年10月番）"
 
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     plugin_author = "Sebas0619"
     plugin_config_prefix = "seasonaltags_"
     plugin_icon = "emby.png"
@@ -73,6 +75,12 @@ class SeasonalTags(_PluginBase):
         # 初始化组件
         self.mediaserver_helper = MediaServerHelper()
         self.tmdbchain = TmdbChain()
+        
+        if not config:
+            return
+        
+        # 初始化通知开关
+        self._notify_enabled = config.get("notify_enabled", False)
         
         if config:
             self._enabled = config.get("enabled")
@@ -283,7 +291,7 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'model': 'target_libraries',
                                             'label': '目标媒体库',
-                                            'placeholder': '多个媒体库用英文逗号隔开',
+                                            'placeholder': '每行输入一个媒体库名称',
                                             'rows': 2,
                                         }
                                     }
@@ -351,6 +359,12 @@ class SeasonalTags(_PluginBase):
             return
         
         try:
+            # 初始化计数器
+            processed_items = 0  # 处理总数
+            success_items = 0   # 成功数
+            failed_items = 0    # 失败数
+            deleted_items = 0   # 删除数
+            
             # 获取媒体服务器实例
             server_info = self.mediaserver_helper.get_service(self._mediaserver)
             if not server_info:
@@ -360,10 +374,6 @@ class SeasonalTags(_PluginBase):
             libraries = server_info.instance.get_librarys()
             if not libraries:
                 return
-            
-            # 记录处理数量
-            processed_items = 0
-            updated_items = 0
             
             # 只处理指定的媒体库
             for library in libraries:
@@ -392,7 +402,7 @@ class SeasonalTags(_PluginBase):
                         if not seasons:
                             continue
                         
-                        # 用于存储所有需要添加的季���标签
+                        # 用于存储所有需要添加的季度标签
                         season_tags = set()
                         
                         # 处理每一季
@@ -430,7 +440,7 @@ class SeasonalTags(_PluginBase):
                                 with RequestUtils(content_type="application/json").post_res(url=req_url, json=tags) as res:
                                     if res and res.status_code == 204:
                                         logger.info(f"为 {item.title} 添加标签：{tag}")
-                                        updated_items += 1
+                                        success_items += 1
                                     else:
                                         logger.error(f"为 {item.title} 添加标签 {tag} 失败")
                                     
@@ -439,41 +449,38 @@ class SeasonalTags(_PluginBase):
                         continue
                     
             # 如果启用了清理,则清理非目标库的标签
-            cleaned_items = 0
             if self._clean_enabled:
                 logger.info("开始清理非目标媒体库的季度标签...")
-                cleaned_items = self.clean_season_tags()
+                deleted_items = self.clean_season_tags()
                 
             # 处理完成后输出统计信息
             logger.info("="*50)
             logger.info("季度标签处理完成！")
             logger.info(f"处理项目数: {processed_items}")
-            logger.info(f"更新标签数: {updated_items}")
-            if self._clean_enabled:
-                logger.info(f"清理标签数: {cleaned_items}")
+            logger.info(f"更新标签数: {success_items}")
+            logger.info(f"失败数: {failed_items}")
+            if deleted_items:
+                logger.info(f"删除标签数: {deleted_items}")
             logger.info("="*50)
             
-            # 添加处理完成通知
+            # 发送通知
             if self._notify_enabled:
-                message = (
-                    f"季度标签处理完成！\n"
-                    f"处理项目数: {processed_items}\n"
-                    f"更新标签数: {updated_items}"
-                )
-                if self._clean_enabled:
-                    message += f"\n清理标签数: {cleaned_items}"
-                    
                 self.post_message(
-                    title="季度标签处理完成",
-                    text=message
+                    mtype=NotificationType.SiteMessage,
+                    title="【季度标签处理完成】",
+                    text=f"处理项目数：{processed_items}\n"
+                         f"更新标签数：{success_items}\n"
+                         f"失败数：{failed_items}\n"
+                         f"删除标签数：{deleted_items}"
                 )
                 
         except Exception as e:
             logger.error(f"处理季度标签时出错：{str(e)}")
-            # 添加错误通知
+            # 发送错误通知
             if self._notify_enabled:
                 self.post_message(
-                    title="季度标签处理出错",
+                    mtype=NotificationType.SiteMessage,
+                    title="【季度标签处理失败】",
                     text=f"错误信息：{str(e)}"
                 )
 
@@ -776,14 +783,15 @@ class SeasonalTags(_PluginBase):
             if not event_data or event_data.get("action") != "seasonaltags":
                 return
             logger.info("收到手动处理请求")
-            self.post_message(channel=event.event_data.get("channel"),
-                             title="开始处理季度标签 ...",
-                             userid=event.event_data.get("user"))
+            # 发送开始处理通知
+            self.__send_message(
+                title="开始处理季度标签",
+                text="开始处理季度标签...",
+                channel=event.event_data.get("channel"),
+                userid=event.event_data.get("user")
+            )
             # 执行处理
             self.process_seasonal_tags()
-            self.post_message(channel=event.event_data.get("channel"),
-                             title="季度标签处理完成！",
-                             userid=event.event_data.get("user"))
 
     def get_libraries(self, server: str):
         """
@@ -974,10 +982,21 @@ class SeasonalTags(_PluginBase):
                             logger.error(f"请求URL: {req_url}")
                             continue
                             
+            # 发送清理完成通知
+            self.__send_message(
+                title="季度标签清理完成",
+                text=f"共清理 {cleaned_count} 个标签"
+            )
+            
             return cleaned_count
                             
         except Exception as e:
             logger.error(f"清理标签失败：{str(e)}")
+            # 发送错误通知
+            self.__send_message(
+                title="季度标签清理失败",
+                text=f"错误信息：{str(e)}"
+            )
             return cleaned_count
 
     def _is_season_tag(self, tag: str) -> bool:
@@ -1023,18 +1042,23 @@ class SeasonalTags(_PluginBase):
             
             # 处理清理动作
             if event_data.get("action") == "clean_season_tags":
-                self.post_message(channel=event_data.get("channel"),
-                                title="开始清理季度标签 ...",
-                                userid=event_data.get("user"))
+                # 发送开始清理通知
+                self.__send_message(
+                    title="开始清理季度标签",
+                    text="开始清理非目标媒体库的季度标签...",
+                    channel=event_data.get("channel"),
+                    userid=event_data.get("user")
+                )
                 
-                if self.clean_season_tags():
-                    self.post_message(channel=event_data.get("channel"),
-                                    title="季度标签清理完成！",
-                                    userid=event_data.get("user"))
-                else:
-                    self.post_message(channel=event_data.get("channel"),
-                                    title="季度标签清理失败！",
-                                    userid=event_data.get("user"))
+                cleaned_count = self.clean_season_tags()
+                
+                # 发送清理完成通知
+                self.__send_message(
+                    title="季度标签清理完成",
+                    text=f"共清理 {cleaned_count} 个标签",
+                    channel=event_data.get("channel"),
+                    userid=event_data.get("user")
+                )
                                 
             # 处理其他动作
             elif event_data.get("action") == "seasonaltags":
@@ -1304,15 +1328,25 @@ class SeasonalTags(_PluginBase):
         # 保存历史记录
         self.save_data('history', self.history_data)
 
-    def post_message(self, channel: Any = None, title: str = None, text: str = None, image: str = None, userid: str = None):
+    def __send_message(self, title: str, text: str, channel: Any = None, image: str = None, userid: str = None):
         """
-        发送消息
+        发送通知消息，统一的通知接口
         """
-        if not self._notify_enabled:  # 检查通知开关状态
+        if not self._notify_enabled:
             return
-            
-        super().post_message(channel=channel, 
-                           title=title, 
-                           text=text, 
-                           image=image, 
-                           userid=userid)
+        
+        try:
+            if channel or userid:
+                # 如果指定了channel或userid，使用父类的post_message方法
+                super().post_message(
+                    channel=channel,
+                    title=title,
+                    text=text,
+                    image=image,
+                    userid=userid
+                )
+            else:
+                # 默认使用系统消息通知
+                self.systemmessage.put(title=title, message=text)
+        except Exception as e:
+            logger.error(f"发送通知消息失败: {str(e)}")
