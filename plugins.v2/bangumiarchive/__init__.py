@@ -326,7 +326,7 @@ class BangumiArchive(_PluginBase):
                 logger.error(f"处理目录出错: {str(e)}")
                 self.__send_notification(
                     title="番剧归档 - 错误",
-                    text=f"��理目录时出错: {str(e)}"
+                    text=f"理目录时出错: {str(e)}"
                 )
 
     def get_page(self) -> List[dict]:
@@ -420,7 +420,16 @@ class BangumiArchive(_PluginBase):
         return []
 
     def get_api(self) -> List[Dict[str, Any]]:
-        return []
+        """
+        定义API接口
+        """
+        return [{
+            "path": "/archive_now",  # API路径
+            "endpoint": self.archive_now,  # API对应的方法
+            "methods": ["GET"],  # 请求方式
+            "summary": "立即执行归档",  # API名称
+            "description": "立即执行一次番剧归档操作"  # API描述
+        }]
 
     def stop_service(self):
         pass

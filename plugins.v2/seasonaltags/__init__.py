@@ -3,12 +3,15 @@ SeasonalTags插件
 用于自动添加季度标签
 """
 from typing import Any, Dict, List, Tuple
+from datetime import datetime
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
 from app.plugins import _PluginBase
-from app.schemas.types import MediaType
+from app.schemas.types import MediaType, SystemConfigKey, ModuleType
 from app.log import logger
 from app.helper.module import ModuleHelper
+from app.helper.service import ServiceBaseHelper
+from app.schemas import MediaServerConf
 
 class SeasonalTags(_PluginBase):
     # 插件基础信息
@@ -30,16 +33,23 @@ class SeasonalTags(_PluginBase):
     
     # 媒体服务器相关
     mediaserver_helper = None
-    _EMBY_HOST = None
-    _EMBY_APIKEY = None
-    _EMBY_USER = None
+    _mediaserver = None
 
     # 在类中初始化
     meta_helper = None
 
     def init_plugin(self, config: dict = None):
-        self.mediaserver_helper = ModuleHelper()
-        self.meta_helper = ModuleHelper()
+        # 初始化媒体服务器
+        self.mediaserver_helper = ServiceBaseHelper(
+            config_key=SystemConfigKey.MediaServers,
+            conf_type=MediaServerConf,
+            module_type=ModuleType.MediaServer
+        )
+        
+        # 获取媒体服务器配置
+        if self._mediaservers:
+            self._mediaserver = self.mediaserver_helper.get_service(name=self._mediaservers)
+        
         if config:
             self._enabled = config.get("enabled")
             self._cron = config.get("cron")
@@ -48,96 +58,62 @@ class SeasonalTags(_PluginBase):
             self._notify = config.get("notify")
             self._test_mode = config.get("test_mode")
 
-    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
-        """配置表单"""
+    def get_form(self) -> List[dict]:
+        """
+        拼装插件配置页面，需要返回配置页面相关信息
+        """
+        # 获取媒体服务器列表
+        mediaserver_list = []
+        for item in self.mediaserver_helper.get_services():
+            mediaserver_list.append({
+                "title": item.name,
+                "value": item.id
+            })
+        
         return [
             {
                 'component': 'VForm',
                 'content': [
                     {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 4,
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'enabled',
-                                            'label': '启用插件'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 4,
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'notify',
-                                            'label': '发送通知'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 4,
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'test_mode',
-                                            'label': '测试模式'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VTextField',
+                        'component': 'VSwitch',
                         'props': {
-                            'model': 'cron',
-                            'label': '定时执行',
-                            'placeholder': '0 0 * * *'
-                        }
-                    },
-                    {
-                        'component': 'VTextarea',
-                        'props': {
-                            'model': 'paths',
-                            'label': '目录配置',
-                            'placeholder': '每行一个动漫目录'
+                            'label': '启用插件',
+                            'v-model': 'enabled'
                         }
                     },
                     {
                         'component': 'VTextField',
                         'props': {
-                            'model': 'mediaservers',
-                            'label': 'Emby服务器',
-                            'placeholder': '配置Emby服务器名称，多个用,分割'
+                            'label': '执行周期',
+                            'v-model': 'cron',
+                            'placeholder': '5 4 * * *'
+                        }
+                    },
+                    {
+                        'component': 'VSelect',
+                        'props': {
+                            'label': '媒体服务器',
+                            'v-model': 'mediaservers',
+                            'items': mediaserver_list
+                        }
+                    },
+                    {
+                        'component': 'VSwitch',
+                        'props': {
+                            'label': '发送通知',
+                            'v-model': 'notify'
+                        }
+                    },
+                    {
+                        'component': 'VSwitch',
+                        'props': {
+                            'label': '测试模式',
+                            'v-model': 'test_mode'
                         }
                     }
                 ]
             }
-        ], {
-            'enabled': False,
-            'notify': False,
-            'test_mode': False,
-            'cron': '0 0 * * *',
-            'paths': '',
-            'mediaservers': ''
-        }
+        ]
 
     def __get_air_date(self, tmdb_id: int) -> str:
         """
@@ -238,6 +214,9 @@ class SeasonalTags(_PluginBase):
                     )
 
     def get_state(self) -> bool:
+        """
+        获取插件状态
+        """
         return self._enabled
     
     def get_command(self) -> List[Dict[str, Any]]:
