@@ -1,3 +1,7 @@
+"""
+SeasonalTags插件
+用于自动添加季度标签
+"""
 from typing import Any, Dict, List, Tuple
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
