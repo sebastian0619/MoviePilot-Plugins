@@ -24,12 +24,13 @@ from app.utils.http import RequestUtils
 
 class SeasonalTags(_PluginBase):
     # 插件基础信息
-    plugin_name = "季度番剧标签"
-    plugin_desc = "自动为动漫添加季度标签（例：2024年10月番）"
+    plugin_name = "Emby季度番剧标签"
+    plugin_desc = "自动为Emby的动漫库添加季度标签（例：2024年10月番）"
     plugin_version = "1.0"
     plugin_author = "Sebas0619"
     plugin_config_prefix = "seasonaltags_"
     plugin_order = 21
+    author_url = "https://github.com/sebastian0619"
     auth_level = 1
 
     # 退出事件
@@ -41,11 +42,20 @@ class SeasonalTags(_PluginBase):
     _cron = None
     _libraries = []  # 改为存储媒体库选择
     _scheduler = None
+    _clean_enabled = False  # 添加清理开关状态
     
     # 链式调用
     tmdbchain = None
     mschain = None
     mediaserver_helper = None
+
+    def __init__(self):
+        super().__init__()
+        self._EMBY_HOST = None
+        self._EMBY_APIKEY = None
+        self._EMBY_USER = None
+        self._mediaserver = None
+        self._clean_enabled = False  # 添加清理开关状态
 
     def init_plugin(self, config: dict = None):
         """
@@ -60,11 +70,27 @@ class SeasonalTags(_PluginBase):
         
         if config:
             self._enabled = config.get("enabled")
+            self._clean_enabled = config.get("clean_enabled")  # 读取清理开关状态
             self._onlyonce = config.get("onlyonce")
             self._cron = config.get("cron")
             self._mediaserver = config.get("mediaserver")
-            # 从配置中获取媒体库名称
             self._target_libraries = config.get("target_libraries", "").split(",") if config.get("target_libraries") else []
+            
+            # 保存配置
+            self.__update_config()
+            
+            # 初始化 Emby 连接信息
+            if self._mediaserver:
+                server_info = self.mediaserver_helper.get_service(self._mediaserver)
+                if server_info:
+                    self._EMBY_USER = server_info.instance.get_user()
+                    self._EMBY_APIKEY = server_info.config.config.get("apikey")
+                    self._EMBY_HOST = server_info.config.config.get("host")
+                    if self._EMBY_HOST:
+                        if not self._EMBY_HOST.endswith("/"):
+                            self._EMBY_HOST += "/"
+                        if not self._EMBY_HOST.startswith("http"):
+                            self._EMBY_HOST = "http://" + self._EMBY_HOST
             
             # 立即运行
             if self._onlyonce:
@@ -106,10 +132,11 @@ class SeasonalTags(_PluginBase):
         """
         self.update_config({
             "enabled": self._enabled,
+            "clean_enabled": self._clean_enabled,  # 保存清理开关状态
             "onlyonce": self._onlyonce,
             "cron": self._cron,
             "mediaserver": self._mediaserver,
-            "library_text": '\n'.join(self._libraries)
+            "target_libraries": ",".join(self._target_libraries) if self._target_libraries else ""
         })
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -127,7 +154,7 @@ class SeasonalTags(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 4
                                 },
                                 'content': [
                                     {
@@ -143,7 +170,23 @@ class SeasonalTags(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'clean_enabled',
+                                            'label': '清理非目标库季度标签',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
                                 },
                                 'content': [
                                     {
@@ -228,10 +271,11 @@ class SeasonalTags(_PluginBase):
             }
         ], {
             "enabled": False,
+            "clean_enabled": False,  # 添加清理开关默认值
             "onlyonce": False,
             "cron": "5 1 * * *",
             "target_libraries": "",
-            "mediaservers": []
+            "mediaserver": None
         }
 
     def __get_air_date(self, tmdb_id: int) -> str:
@@ -281,86 +325,111 @@ class SeasonalTags(_PluginBase):
         if not self._mediaserver:
             return
         
-        # 获取媒体服务器实例
-        server_info = self.mediaserver_helper.get_service(self._mediaserver)
-        if not server_info:
-            return
-        
-        # 设置 Emby 连接信息
-        self._EMBY_USER = server_info.instance.get_user()
-        self._EMBY_APIKEY = server_info.config.config.get("apikey")
-        self._EMBY_HOST = server_info.config.config.get("host")
-        if not self._EMBY_HOST.endswith("/"):
-            self._EMBY_HOST += "/"
-        if not self._EMBY_HOST.startswith("http"):
-            self._EMBY_HOST = "http://" + self._EMBY_HOST
-        
-        # 获取所有媒体库
-        libraries = server_info.instance.get_librarys()
-        if not libraries:
-            return
-        
-        # 只处理指定的媒体库
-        for library in libraries:
-            # 检查是否是目标媒体库
-            if library.name not in self._target_libraries:
-                continue
+        try:
+            # 获取媒体服务器实例
+            server_info = self.mediaserver_helper.get_service(self._mediaserver)
+            if not server_info:
+                return
             
-            logger.info(f"开始处理媒体库：{library.name}")
+            # 获取所有媒体库
+            libraries = server_info.instance.get_librarys()
+            if not libraries:
+                return
             
-            # 获取媒体库中的项目
-            items = server_info.instance.get_items(library.id)
-            if not items:
-                continue
+            # 记录处理数量
+            processed_items = 0
+            updated_items = 0
             
-            # 处理每个项目
-            for item in items:
-                if not item:
+            # 只处理指定的媒体库
+            for library in libraries:
+                # 检查是否是目标媒体库
+                if library.name not in self._target_libraries:
                     continue
                     
-                logger.debug(f"正在处理：{item.title}")
+                logger.info(f"开始处理媒体库：{library.name}")
                 
-                # 获取当前标签
-                current_tags = self._get_item_tags(server_info.instance, item.item_id)
-                logger.debug(f"{item.title} 当前标签：{current_tags}")
-                
-                # 获取媒体信息
-                mediainfo = None
-                try:
-                    if item.tmdbid:
-                        logger.debug(f"{item.title} 使用TMDB ID：{item.tmdbid}")
-                        mediainfo = self.chain.recognize_media(
-                            mtype=MediaType.TV,  # 动漫库都是剧集类型
-                            tmdbid=item.tmdbid
-                        )
+                # 获取媒体库中的项目
+                items = server_info.instance.get_items(library.id)
+                if not items:
+                    continue
                     
-                    if not mediainfo:
-                        logger.debug(f"{item.title} 未找到TMDB ID")
+                # 处理每个项目
+                for item in items:
+                    if not item:
                         continue
-                    
-                    # 获取首播日期
-                    air_date = mediainfo.release_date or mediainfo.first_air_date
-                    if not air_date:
-                        logger.debug(f"{item.title} 未获取到首播日期")
-                        continue
-                    
-                    # 生成季度标签
-                    season_tag = self._get_season_tag(air_date)
-                    if not season_tag:
-                        logger.debug(f"{item.title} 无法计算季度标签")
-                        continue
-                    
-                    # 更新标签
-                    if season_tag not in current_tags:
-                        if self._update_item_tags(self._mediaserver, server_info.type, 
-                                                item.item_id, current_tags, season_tag):
-                            logger.info(f"为 {item.title} 添加标签：{season_tag}")
-                        else:
-                            logger.error(f"为 {item.title} 添加标签 {season_tag} 失败")
                         
-                except Exception as e:
-                    logger.error(f"处理 {item.title} 失败：{str(e)}")
-                    continue
+                    processed_items += 1
+                    logger.info(f"正在处理第 {processed_items} 个项目：{item.title}")
+                    
+                    try:
+                        # 获取所有季信息
+                        seasons = self.tmdbchain.tmdb_seasons(tmdbid=item.tmdbid)
+                        if not seasons:
+                            continue
+                        
+                        # 用于存储所有需要添加的季度标签
+                        season_tags = set()
+                        
+                        # 处理每一季
+                        for season in seasons:
+                            # 跳过特别篇
+                            if season.season_number == 0:
+                                continue
+                            
+                            # 获取该季的首播日期
+                            if not season.air_date:
+                                continue
+                            
+                            # 生成该季的标签
+                            season_tag = self._get_season_tag(season.air_date)
+                            if season_tag:
+                                season_tags.add(season_tag)
+                                logger.debug(f"{item.title} 第{season.season_number}季 标签：{season_tag}")
+                        
+                        # 获取当前标签
+                        req_url = f"{self._EMBY_HOST}emby/Users/{self._EMBY_USER}/Items/{item.item_id}?api_key={self._EMBY_APIKEY}"
+                        current_tags = []
+                        with RequestUtils().get_res(req_url) as res:
+                            if res and res.status_code == 200:
+                                item_info = res.json()
+                                current_tags = [tag.get('Name') for tag in item_info.get("TagItems", [])]
+                        
+                        # 添加新标签
+                        for tag in season_tags:
+                            if tag not in current_tags:
+                                # 构造标签数据
+                                tags = {"Tags": [{"Name": tag}]}
+                                
+                                # 通过 Emby API 添加标签
+                                req_url = f"{self._EMBY_HOST}emby/Items/{item.item_id}/Tags/Add?api_key={self._EMBY_APIKEY}"
+                                with RequestUtils(content_type="application/json").post_res(url=req_url, json=tags) as res:
+                                    if res and res.status_code == 204:
+                                        logger.info(f"为 {item.title} 添加标签：{tag}")
+                                        updated_items += 1
+                                    else:
+                                        logger.error(f"为 {item.title} 添加标签 {tag} 失败")
+                                    
+                    except Exception as e:
+                        logger.error(f"处理 {item.title} 时出错：{str(e)}")
+                        continue
+                    
+            # 如果启用了清理,则清理非目标库的标签
+            cleaned_items = 0
+            if self._clean_enabled:
+                logger.info("开始清理非目标媒体库的季度标签...")
+                cleaned_items = self.clean_season_tags()
+                
+            # 处理完成后输出统计信息
+            logger.info("="*50)
+            logger.info("季度标签处理完成！")
+            logger.info(f"处理项目数: {processed_items}")
+            logger.info(f"更新标签数: {updated_items}")
+            if self._clean_enabled:
+                logger.info(f"清理标签数: {cleaned_items}")
+            logger.info("="*50)
+            
+        except Exception as e:
+            logger.error(f"处理季度标签时出错：{str(e)}")
 
     def _get_item_tags(self, server, item_id: str) -> List[str]:
         """
@@ -489,15 +558,26 @@ class SeasonalTags(_PluginBase):
         """
         定义远程控制命令
         """
-        return [{
-            "cmd": "/seasonaltags",
-            "event": EventType.PluginAction,
-            "desc": "手动执行季度标签处理",
-            "category": "媒体管理",
-            "data": {
-                "action": "seasonaltags"
+        return [
+            {
+                "cmd": "/seasonaltags",
+                "event": EventType.PluginAction,
+                "desc": "手动执行季度标签处理",
+                "category": "媒体管理",
+                "data": {
+                    "action": "seasonaltags"
+                }
+            },
+            {
+                "cmd": "/clean_season_tags",
+                "event": EventType.PluginAction,
+                "desc": "清理非目标媒体库的季度标签",
+                "category": "媒体管理",
+                "data": {
+                    "action": "clean_season_tags"
+                }
             }
-        }]
+        ]
 
     def get_api(self) -> List[Dict[str, Any]]:
         """
@@ -768,3 +848,149 @@ class SeasonalTags(_PluginBase):
         except Exception as e:
             logger.error(f"更新标签失败：{str(e)}")
             return False
+
+    def clean_season_tags(self):
+        """
+        清理非目标媒体库的季度标签
+        返回清理的项目数
+        """
+        cleaned_count = 0
+        try:
+            # 获取媒体服务器实例
+            server_info = self.mediaserver_helper.get_service(self._mediaserver)
+            if not server_info:
+                return cleaned_count
+            
+            # 获取所有媒体库
+            libraries = server_info.instance.get_librarys()
+            if not libraries:
+                return cleaned_count
+            
+            # 遍历所有媒体库
+            for library in libraries:
+                # 跳过目标媒体库
+                if library.name in self._target_libraries:
+                    continue
+                    
+                logger.info(f"正在清理媒体库：{library.name}")
+                
+                # 获取媒体库中的项目
+                items = server_info.instance.get_items(library.id)
+                if not items:
+                    continue
+                    
+                # 处理每个项目
+                for item in items:
+                    if not item:
+                        continue
+                        
+                    # 获取当前标签
+                    req_url = f"{self._EMBY_HOST}emby/Users/{self._EMBY_USER}/Items/{item.item_id}?api_key={self._EMBY_APIKEY}"
+                    current_tags = []
+                    with RequestUtils().get_res(req_url) as res:
+                        if res and res.status_code == 200:
+                            item_info = res.json()
+                            current_tags = [tag.get('Name') for tag in item_info.get("TagItems", [])]
+                    
+                    # 检查是否有季度标签
+                    season_tags = [tag for tag in current_tags if self._is_season_tag(tag)]
+                    if not season_tags:
+                        continue
+                        
+                    # 移除季度标签
+                    for tag in season_tags:
+                        # 构造删除标签的请求体
+                        remove_tags = {
+                            "Tags": [
+                                {"Name": tag}
+                            ]
+                        }
+                        
+                        # 使用 POST 请求移除标签
+                        req_url = f"{self._EMBY_HOST}emby/Items/{item.item_id}/Tags/Delete?api_key={self._EMBY_APIKEY}"
+                        logger.debug(f"尝试删除标签，请求URL: {req_url}")
+                        logger.debug(f"请求体: {remove_tags}")
+                        
+                        req = RequestUtils(content_type="application/json")
+                        try:
+                            res = req.post_res(url=req_url, json=remove_tags)
+                            logger.debug(f"删除请求响应: 状态码={res.status_code if res else 'None'}")
+                            if res:
+                                logger.debug(f"响应内容: {res.text}")
+                            
+                            if res and res.status_code == 204:
+                                logger.info(f"从 {item.title} 移除标签：{tag}")
+                                cleaned_count += 1
+                            else:
+                                logger.error(f"从 {item.title} 移除标签 {tag} 失败，状态码：{res.status_code if res else 'None'}")
+                        except Exception as e:
+                            logger.error(f"删除标签请求失败: {str(e)}")
+                            logger.error(f"请求URL: {req_url}")
+                            continue
+                            
+            return cleaned_count
+                            
+        except Exception as e:
+            logger.error(f"清理标签失败：{str(e)}")
+            return cleaned_count
+
+    def _is_season_tag(self, tag: str) -> bool:
+        """
+        判断是否是季度标签
+        """
+        try:
+            # 季度标签格式: YYYY年MM月番
+            if not tag or len(tag) != 9:
+                return False
+            
+            # 检查格式
+            if not (tag.endswith("月番") and "年" in tag):
+                return False
+            
+            # 分割年月
+            year_str = tag.split("年")[0]
+            month_str = tag.split("年")[1].split("月")[0]
+            
+            # 验证年份
+            year = int(year_str)
+            if year < 1900 or year > 2100:
+                return False
+            
+            # 验证月份
+            month = int(month_str)
+            if month not in [1, 4, 7, 10]:
+                return False
+            
+            return True
+        except:
+            return False
+
+    @eventmanager.register(EventType.PluginAction)
+    def plugin_action(self, event: Event):
+        """
+        插件动作
+        """
+        if event:
+            event_data = event.event_data
+            if not event_data:
+                return
+            
+            # 处理清理动作
+            if event_data.get("action") == "clean_season_tags":
+                self.post_message(channel=event_data.get("channel"),
+                                title="开始清理季度标签 ...",
+                                userid=event_data.get("user"))
+                
+                if self.clean_season_tags():
+                    self.post_message(channel=event_data.get("channel"),
+                                    title="季度标签清理完成！",
+                                    userid=event_data.get("user"))
+                else:
+                    self.post_message(channel=event_data.get("channel"),
+                                    title="季度标签清理失败！",
+                                    userid=event_data.get("user"))
+                                
+            # 处理其他动作
+            elif event_data.get("action") == "seasonaltags":
+                # ... 现有的手动处理代码 ...
+                pass
