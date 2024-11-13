@@ -235,4 +235,31 @@ class SeasonalTags(_PluginBase):
                     self.post_message(
                         title="季度番剧标签 - 错误",
                         text=f"处理 {path} 时出错: {str(e)}"
-                    ) 
+                    )
+
+    def get_state(self) -> bool:
+        return self._enabled
+    
+    def get_command(self) -> List[Dict[str, Any]]:
+        """
+        定义远程控制命令
+        """
+        return []
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        """
+        定义API接口
+        """
+        return []
+
+    def get_page(self) -> List[dict]:
+        """
+        插件页面
+        """
+        return []
+
+    def stop_service(self):
+        """
+        停止服务
+        """
+        pass 
