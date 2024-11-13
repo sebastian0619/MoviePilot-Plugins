@@ -9,17 +9,13 @@ from app.plugins import _PluginBase
 from app.schemas.types import MediaType
 from app.log import logger
 from app.helper.module import ModuleHelper
-from app.helper.meta import MetaHelper
-from datetime import datetime
-import os
-import re
 
 class SeasonalTags(_PluginBase):
     # 插件基础信息
     plugin_name = "季度番剧标签"
     plugin_desc = "自动为动漫添加季度标签（例：2024年10月番）"
     plugin_version = "1.0"
-    plugin_author = "your_name"
+    plugin_author = "Sebas0619"
     plugin_config_prefix = "seasonaltags_"
     plugin_order = 21
     auth_level = 1
@@ -38,8 +34,12 @@ class SeasonalTags(_PluginBase):
     _EMBY_APIKEY = None
     _EMBY_USER = None
 
+    # 在类中初始化
+    meta_helper = None
+
     def init_plugin(self, config: dict = None):
         self.mediaserver_helper = ModuleHelper()
+        self.meta_helper = ModuleHelper().get_meta_helper()
         if config:
             self._enabled = config.get("enabled")
             self._cron = config.get("cron")
@@ -144,7 +144,7 @@ class SeasonalTags(_PluginBase):
         获取首播日期
         """
         try:
-            meta = MetaInfo(tmdb_id=tmdb_id)
+            meta = self.meta_helper.get_meta_info(tmdb_id=tmdb_id)
             if meta.first_air_date:
                 air_date = datetime.strptime(meta.first_air_date, '%Y-%m-%d')
                 return f"{air_date.year}年{air_date.month:02d}月番"
@@ -194,7 +194,7 @@ class SeasonalTags(_PluginBase):
             
             try:
                 # 获取目录下的所有剧集
-                meta_info = MetaInfo(path)
+                meta_info = self.meta_helper.get_meta_info(path)
                 if not meta_info.tmdb_id:
                     logger.error(f"无法获取TMDB ID: {path}")
                     continue

@@ -9,8 +9,6 @@ from app.plugins import _PluginBase
 from app.schemas.types import MediaType
 from app.log import logger
 from app.helper.module import ModuleHelper
-from app.helper.meta import MetaHelper
-from app.db.models.transferhistory import TransferHistory
 from datetime import datetime
 import os
 import shutil
@@ -43,7 +41,11 @@ class BangumiArchive(_PluginBase):
         'discontinued'     # 停播
     ]
     
+    # 在类中初始化
+    meta_helper = None
+    
     def init_plugin(self, config: dict = None):
+        self.meta_helper = ModuleHelper().get_meta_helper()
         if config:
             self._enabled = config.get("enabled")
             self._cron = config.get("cron")
