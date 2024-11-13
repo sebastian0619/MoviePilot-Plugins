@@ -18,7 +18,7 @@ from app.chain.tmdb import TmdbChain
 from app.chain.mediaserver import MediaServerChain
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from app.utils.request_utils import RequestUtils
+from app.utils.http import RequestUtils
 
 @dataclass
 class ServiceInfo:
