@@ -5,6 +5,7 @@ SeasonalTags插件
 from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 import pytz
+from dataclasses import dataclass
 
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
