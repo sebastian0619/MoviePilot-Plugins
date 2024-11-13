@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
 from app.plugins import _PluginBase
-from app.schemas.types import MediaType, SystemConfigKey, ModuleType, ServiceInfo 
+from app.schemas import MediaInfo, MediaServerItem, ServiceInfo
+from app.schemas.types import MediaType, SystemConfigKey, ModuleType, EventType
 from app.log import logger
 from app.helper.mediaserver import MediaServerHelper
 from app.chain.tmdb import TmdbChain
