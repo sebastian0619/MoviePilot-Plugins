@@ -3,9 +3,8 @@ SeasonalTags插件
 用于自动添加季度标签
 """
 from typing import Any, Dict, List, Tuple, Optional
-from datetime import datetime
-from dataclasses import dataclass
-import threading
+from datetime import datetime, timedelta
+import pytz
 
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
@@ -68,46 +67,72 @@ class SeasonalTags(_PluginBase):
         # 停止现有任务
         self.stop_service()
         
-        # 初始化链式调用
-        self.tmdbchain = TmdbChain()
-        self.mschain = MediaServerChain()
+        # 初始化组件
         self.mediaserver_helper = MediaServerHelper()
+        self.tmdbchain = TmdbChain()
         
         if config:
             self._enabled = config.get("enabled")
             self._onlyonce = config.get("onlyonce")
             self._cron = config.get("cron")
-            self._libraries = config.get("libraries") or []  # 初始化媒体库选择
+            self._mediaserver = config.get("mediaserver")
+            # 从配置中获取媒体库名称
+            self._target_libraries = config.get("target_libraries", "").split(",") if config.get("target_libraries") else []
             
-            # 启动定时任务
-            if self._enabled and self._cron:
+            # 立即运行
+            if self._onlyonce:
+                logger.info(f"季度标签服务启动，立即运行一次...")
+                # 创建定时任务
                 self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                self._scheduler.add_job(self.process_seasonal_tags,
-                                      CronTrigger.from_crontab(self._cron))
-                self._scheduler.start()
-                logger.info(f"季度番剧标签服务启动，周期：{self._cron}")
+                self._scheduler.add_job(func=self.process_seasonal_tags,
+                                      trigger='date',
+                                      run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                      name="季度标签")
+                # 启动任务
+                if self._scheduler.get_jobs():
+                    self._scheduler.print_jobs()
+                    self._scheduler.start()
+                    logger.info("立即运行任务已启动")
+                
+                # 关闭一次性开关
+                self._onlyonce = False
+                # 保存配置
+                self.__update_config()
+                
+            # 周期运行
+            elif self._enabled and self._cron:
+                try:
+                    self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                    self._scheduler.add_job(func=self.process_seasonal_tags,
+                                          trigger=CronTrigger.from_crontab(self._cron),
+                                          name="季度标签")
+                    if self._scheduler.get_jobs():
+                        self._scheduler.print_jobs()
+                        self._scheduler.start()
+                        logger.info(f"周期任务已启动，执行周期：{self._cron}")
+                except Exception as err:
+                    logger.error(f"周期任务启动失败：{str(err)}")
+
+    def __update_config(self):
+        """
+        更新配置
+        """
+        self.update_config({
+            "enabled": self._enabled,
+            "onlyonce": self._onlyonce,
+            "cron": self._cron,
+            "mediaserver": self._mediaserver,
+            "library_text": '\n'.join(self._libraries)
+        })
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
         拼装插件配置页面
         """
-        # 获取媒体服务器中的媒体库列表
-        library_items = []
-        emby_servers = self.mediaserver_helper.get_services(type_filter="emby")
-        if emby_servers:
-            for server_name, server_info in emby_servers.items():
-                libraries = server_info.instance.get_librarys()
-                if libraries:
-                    for library in libraries:
-                        library_items.append({
-                            "title": f"{server_name}/{library.name}",
-                            "value": f"{server_name}|{library.name}"
-                        })
-
         return [
             {
-                'component': 'VForm',
-                'content': [
+                "component": "VForm",
+                "content": [
                     # 启用开关和立即运行开关
                     {
                         'component': 'VRow',
@@ -146,15 +171,14 @@ class SeasonalTags(_PluginBase):
                             }
                         ]
                     },
-                    # 执行周期
+                    # Cron表达式
                     {
                         'component': 'VRow',
                         'content': [
                             {
                                 'component': 'VCol',
                                 'props': {
-                                    'cols': 12,
-                                    'md': 6
+                                    'cols': 12
                                 },
                                 'content': [
                                     {
@@ -162,14 +186,14 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'model': 'cron',
                                             'label': '执行周期',
-                                            'placeholder': '5位cron表达式'
+                                            'placeholder': '5位cron表达式，如：0 0 * * *'
                                         }
                                     }
                                 ]
                             }
                         ]
                     },
-                    # 媒体库选择
+                    # 媒体服务器选择
                     {
                         'component': 'VRow',
                         'content': [
@@ -182,26 +206,52 @@ class SeasonalTags(_PluginBase):
                                     {
                                         'component': 'VSelect',
                                         'props': {
-                                            'multiple': True,
-                                            'chips': True,
-                                            'clearable': True,
-                                            'model': 'libraries',
-                                            'label': '媒体库',
-                                            'items': library_items
+                                            'model': 'mediaserver',
+                                            'label': '媒体服务器',
+                                            'items': [{"title": config.name, "value": config.name}
+                                                     for config in self.mediaserver_helper.get_configs().values() 
+                                                     if config.type == "emby"],
+                                            'clearable': True
                                         }
                                     }
                                 ]
                             }
                         ]
                     },
-                    # 说明
+                    # 媒体库输入框
                     {
                         'component': 'VRow',
                         'content': [
                             {
                                 'component': 'VCol',
                                 'props': {
-                                    'cols': 12,
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'library_text',
+                                            'label': '媒体库名称',
+                                            'placeholder': '每行输入一个媒体库名称',
+                                            'rows': 3,
+                                            'persistent-placeholder': True,
+                                            'hide-details': False,
+                                            'disabled': False
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    # 说明文本
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
                                 },
                                 'content': [
                                     {
@@ -209,7 +259,28 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '选择需要添加季度标签的媒体库，将根据剧集的首播时间自动添加对应季度标签。'
+                                            'text': '选择媒体服务器后，输入需要添加季度标签的媒体库名称，每行一个。将根据剧集的首播时间自动添加对应季度标签。'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'target_libraries',
+                                            'label': '目标媒体库',
+                                            'placeholder': '媒体库名称，多个用英文逗号分隔'
                                         }
                                     }
                                 ]
@@ -222,7 +293,9 @@ class SeasonalTags(_PluginBase):
             "enabled": False,
             "onlyonce": False,
             "cron": "5 1 * * *",
-            "libraries": []  # 改为存储媒体库选择
+            "mediaserver": None,
+            "library_text": "",
+            "target_libraries": ""
         }
 
     def __get_air_date(self, tmdb_id: int) -> str:
@@ -269,101 +342,103 @@ class SeasonalTags(_PluginBase):
         """
         处理季度标签
         """
-        logger.info(f"开始执行季度标签任务 ...")
-        
-        # 获取媒体服务器
-        media_servers = self.mediaserver_helper.get_services(
-            name_filters=self._libraries
-        )
-        if not media_servers:
-            logger.error("未配置媒体服务器")
+        if not self._mediaserver:
             return
-            
-        # 处理每个媒体服务器
-        for server_name, server_info in media_servers.items():
-            logger.info(f"开始处理媒体服务器：{server_name}")
-            
-            # 获取媒体库
-            librarys = server_info.instance.get_librarys()
-            if not librarys:
-                logger.error(f"{server_name} 获取媒体库失败")
+        
+        # 获取媒体服务器实例
+        server_info = self.mediaserver_helper.get_service(self._mediaserver)
+        if not server_info:
+            return
+        
+        # 设置 Emby 连接信息
+        self._EMBY_USER = server_info.instance.get_user()
+        self._EMBY_APIKEY = server_info.config.config.get("apikey")
+        self._EMBY_HOST = server_info.config.config.get("host")
+        if not self._EMBY_HOST.endswith("/"):
+            self._EMBY_HOST += "/"
+        if not self._EMBY_HOST.startswith("http"):
+            self._EMBY_HOST = "http://" + self._EMBY_HOST
+        
+        # 获取所有媒体库
+        libraries = server_info.instance.get_librarys()
+        if not libraries:
+            return
+        
+        # 只处理指定的媒体库
+        for library in libraries:
+            # 检查是否是目标媒体库
+            if library.name not in self._target_libraries:
                 continue
-                
-            # 处理每个媒体库
-            for library in librarys:
-                # 检查是否是选中的媒体库
-                library_key = f"{server_name}|{library.name}"
-                if library_key not in self._libraries:
-                    logger.debug(f"跳过未选择的媒体库：{library.name}")
+            
+            logger.info(f"开始处理媒体库：{library.name}")
+            
+            # 获取媒体库中的项目
+            items = server_info.instance.get_items(library.id)
+            if not items:
+                continue
+            
+            # 处理每个项目
+            for item in items:
+                if not item:
                     continue
                     
-                logger.info(f"开始处理媒体库：{library.name}")
+                logger.debug(f"正在处理：{item.title}")
                 
-                # 获取媒体库中的项目
-                items = server_info.instance.get_items(library.id)
-                if not items:
-                    logger.warning(f"媒体库 {library.name} 未获取到媒体项目")
-                    continue
+                # 获取当前标签
+                current_tags = self._get_item_tags(server_info.instance, item.item_id)
+                logger.debug(f"{item.title} 当前标签：{current_tags}")
+                
+                # 获取媒体信息
+                mediainfo = None
+                try:
+                    if item.tmdbid:
+                        logger.debug(f"{item.title} 使用TMDB ID：{item.tmdbid}")
+                        mediainfo = self.chain.recognize_media(
+                            mtype=MediaType.TV,  # 动漫库都是剧集类型
+                            tmdbid=item.tmdbid
+                        )
                     
-                # 处理每个项目
-                processed_count = 0
-                tagged_count = 0
-                for item in items:
-                    if not item:
+                    if not mediainfo:
+                        logger.debug(f"{item.title} 未找到TMDB ID")
                         continue
-                        
-                    if self._event.is_set():
-                        logger.info(f"季度标签任务停止")
-                        return
-                        
-                    processed_count += 1
-                    logger.debug(f"正在处理：{item.title}")
                     
-                    # 获取当前标签
-                    current_tags = self._get_item_tags(
-                        server=server_info.instance,
-                        item_id=item.item_id
-                    )
-                    logger.debug(f"{item.title} 当前标签：{current_tags}")
+                    # 获取首播日期
+                    air_date = mediainfo.release_date or mediainfo.first_air_date
+                    if not air_date:
+                        logger.debug(f"{item.title} 未获取到首播日期")
+                        continue
                     
-                    # 计算季度标签
-                    season_tag = self._calculate_season_tag(item)
+                    # 生成季度标签
+                    season_tag = self._get_season_tag(air_date)
                     if not season_tag:
                         logger.debug(f"{item.title} 无法计算季度标签")
                         continue
-                        
-                    # 添加标签到剧集和季
+                    
+                    # 更新标签
                     if season_tag not in current_tags:
-                        if self._add_tags_to_series_and_season(
-                            server=server_info.instance,
-                            item=item,
-                            season_tag=season_tag
-                        ):
-                            tagged_count += 1
-                            logger.info(f"为 {item.title} 及其季添加标签：{season_tag}")
+                        if self._update_item_tags(self._mediaserver, server_info.type, 
+                                                item.item_id, current_tags, season_tag):
+                            logger.info(f"为 {item.title} 添加标签：{season_tag}")
                         else:
                             logger.error(f"为 {item.title} 添加标签 {season_tag} 失败")
-                    else:
-                        logger.debug(f"{item.title} 已存在标签：{season_tag}")
                         
-                logger.info(f"媒体库 {library.name} 处理完成，共处理 {processed_count} 个项目，添加标签 {tagged_count} 个")
-                
-            logger.info(f"媒体服务器 {server_name} 处理完成")
-            
-        logger.info(f"季度标签任务执行完成")
+                except Exception as e:
+                    logger.error(f"处理 {item.title} 失败：{str(e)}")
+                    continue
 
     def _get_item_tags(self, server, item_id: str) -> List[str]:
         """
-        获取项目当前标签
+        获取媒体的标签
         """
         try:
-            item_info = server.get_item_info(item_id)
-            tags = [tag.get('Name') for tag in item_info.get("TagItems", [])]
-            logger.debug(f"获取到标签：{tags}")
-            return tags
+            req_url = f"{self._EMBY_HOST}emby/Users/{self._EMBY_USER}/Items/{item_id}?api_key={self._EMBY_APIKEY}"
+            with RequestUtils().get_res(req_url) as res:
+                if res and res.status_code == 200:
+                    item = res.json()
+                    return [tag.get('Name') for tag in item.get("TagItems", [])]
         except Exception as e:
             logger.error(f"获取标签失败：{str(e)}")
-            return []
+        return []
 
     def _add_tag(self, server, item_id: str, tag: str) -> bool:
         """
@@ -379,35 +454,98 @@ class SeasonalTags(_PluginBase):
                 logger.error(f"标签添加失败")
             return ret
         except Exception as e:
-            logger.error(f"添加标签失败：{str(e)}")
+            logger.error(f"添加签失败：{str(e)}")
             return False
 
-    def _calculate_season_tag(self, item) -> Optional[str]:
+    def _calculate_season_tag(self, server, item) -> Optional[str]:
         """
         计算季度标签
         """
-        # 根据项目添加时间或首播时间计算季度
-        # 返回对应的标签名称
-        pass
+        try:
+            # 获取TMDB ID
+            tmdb_id = None
+            if hasattr(item, 'provider_ids'):
+                provider_ids = item.provider_ids or {}
+                if provider_ids.get("Tmdb"):
+                    tmdb_id = provider_ids.get("Tmdb")
+            
+            if not tmdb_id:
+                logger.debug(f"{item.title} 未找到TMDB ID")
+                return None
+            
+            # 获取首播日期
+            air_date = None
+            if hasattr(item, 'type') and item.type == "Series":
+                # 获取剧集信息
+                series_info = self.tmdbchain.get_series_detail(tmdbid=tmdb_id)
+                if series_info:
+                    air_date = series_info.first_air_date
+            else:
+                logger.debug(f"{item.title} 不是剧集")
+                return None
+                
+            if not air_date:
+                logger.debug(f"{item.title} 未找到首播日期")
+                return None
+            
+            # 解析日期
+            try:
+                air_date = datetime.strptime(air_date, '%Y-%m-%d')
+            except Exception as e:
+                logger.error(f"日期解析失败: {str(e)}")
+                return None
+            
+            # 计算季度
+            month = air_date.month
+            year = air_date.year
+            
+            if 1 <= month <= 3:
+                season_month = 1
+            elif 4 <= month <= 6:
+                season_month = 4
+            elif 7 <= month <= 9:
+                season_month = 7
+            else:
+                season_month = 10
+                
+            # 生成标签
+            season_tag = f"{year}年{season_month:02d}月番"
+            logger.debug(f"{item.title} 计算得到标签：{season_tag}")
+            return season_tag
+            
+        except Exception as e:
+            logger.error(f"计算标签失败：{str(e)}")
+            return None
 
-    def service_infos(self) -> Optional[Dict[str, ServiceInfo]]:
+    def service_infos(self, server_type: Optional[str] = None) -> Optional[Dict[str, ServiceInfo]]:
         """
-        获取媒体服务器信息
+        获取媒体服务器实例
         """
-        if not self._libraries:
+        if not self._mediaservers:
             logger.warning("尚未配置媒体服务器，请检查配置")
             return None
 
-        services = self.mediaserver_helper.get_services(name_filters=self._libraries)
+        services = self.mediaserver_helper.get_services(type_filter=server_type, name_filters=self._mediaservers)
         if not services:
             logger.warning("获取媒体服务器实例失败，请检查配置")
             return None
 
-        return services
+        active_services = {}
+        for service_name, service_info in services.items():
+            if service_info.instance.is_inactive():
+                logger.warning(f"媒体服务器 {service_name} 未连接，请检查配置")
+            else:
+                active_services[service_name] = service_info
+
+        if not active_services:
+            logger.warning("没有已连接的媒体服务器，请检查配置")
+            return None
+
+        return active_services
 
     def get_state(self) -> bool:
         """
-        获取插件状态
+        获取插件态
         """
         return self._enabled
     
@@ -415,19 +553,62 @@ class SeasonalTags(_PluginBase):
         """
         定义远程控制命令
         """
-        return []
+        return [{
+            "cmd": "/seasonaltags",
+            "event": EventType.PluginAction,
+            "desc": "手动执行季度标签处理",
+            "category": "媒体管理",
+            "data": {
+                "action": "seasonaltags"
+            }
+        }]
 
     def get_api(self) -> List[Dict[str, Any]]:
         """
         定义API接口
         """
-        return []
+        return [{
+            "path": "/seasonaltags/libraries",
+            "endpoint": self.get_libraries,
+            "methods": ["GET"],
+            "summary": "获取媒体库列表",
+            "description": "获取定媒体服务器的媒体库列表"
+        }]
 
     def get_page(self) -> List[dict]:
         """
-        插件页面
+        插件页面配置
         """
-        return []
+        return [
+            {
+                'component': 'div',
+                'props': {
+                    'class': 'pa-0'
+                },
+                'content': [
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'api',
+                                        'props': {
+                                            'url': '/seasonaltags/libraries?server={mediaserver}',
+                                            'method': 'GET'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
 
     def stop_service(self):
         """
@@ -520,5 +701,134 @@ class SeasonalTags(_PluginBase):
             return True
                 
         except Exception as e:
-            logger.error(f"添加剧集和季标签失败：{str(e)}")
+            logger.error(f"加剧集和季标签失败：{str(e)}")
+            return False
+
+    @eventmanager.register(EventType.PluginAction)
+    def manual_process(self, event: Event):
+        """
+        手动处理
+        """
+        if event:
+            event_data = event.event_data
+            if not event_data or event_data.get("action") != "seasonaltags":
+                return
+            logger.info("收到手动处理请求")
+            self.post_message(channel=event.event_data.get("channel"),
+                             title="开始处理季度标签 ...",
+                             userid=event.event_data.get("user"))
+            # 执行处理
+            self.process_seasonal_tags()
+            self.post_message(channel=event.event_data.get("channel"),
+                             title="季度标签处理完成！",
+                             userid=event.event_data.get("user"))
+
+    def get_libraries(self, server: str):
+        """
+        获取媒体库列表
+        """
+        if not server:
+            return []
+        
+        try:
+            # 获取媒体服务器实例
+            server_info = self.mediaserver_helper.get_service(server)
+            if not server_info:
+                return []
+            
+            # 获取媒体库列表
+            libraries = server_info.instance.get_librarys()
+            if not libraries:
+                return []
+            
+            # 转换为下拉菜单选项格式
+            return [{
+                "title": library.name,
+                "value": f"{server}|{library.name}"
+            } for library in libraries]
+            
+        except Exception as e:
+            logger.error(f"获取媒体库列表失败：{str(e)}")
+            return []
+
+    def __update_item(self, server: str, item: MediaServerItem, server_type: str = None,
+                      mediainfo: MediaInfo = None, season: int = None):
+        """
+        更新媒体服务器中的条目
+        """
+        # 识别媒体信息
+        if not mediainfo:
+            mtype = MediaType.TV if item.item_type in ['Series', 'show'] else MediaType.MOVIE
+            
+            # 优先使用 TMDB ID
+            if item.tmdbid:
+                mediainfo = self.chain.recognize_media(mtype=mtype, tmdbid=item.tmdbid)
+            
+            # 如果没有 TMDB ID 或识别失败，尝试通过名称搜索
+            if not mediainfo:
+                logger.info(f"{item.title} 未找到tmdbid或识别失败，尝试通过名称搜索...")
+                # 通过标题搜索 TMDB
+                mediainfo = self.chain.recognize_media(
+                    mtype=mtype,
+                    title=item.title,
+                    year=item.year
+                )
+            
+            # 如果仍然无法识别
+            if not mediainfo:
+                logger.warn(f"{item.title} 未识别到媒体信息")
+                return
+
+        # 获取媒体项
+        iteminfo = self.get_iteminfo(server=server, server_type=server_type, itemid=item.item_id)
+        if not iteminfo:
+            logger.warn(f"{item.title} 未找到媒体项")
+            return
+
+        # ... 后续处理代码保持不变 ...
+
+    def _get_season_tag(self, air_date: str) -> str:
+        """
+        根据首播日期生成季度标签，格式为 YYYY年X月番
+        """
+        try:
+            # 解析日期
+            date_obj = datetime.strptime(air_date, '%Y-%m-%d')
+            year = date_obj.year
+            month = date_obj.month
+            
+            # 获取季度月份
+            if 1 <= month <= 3:
+                season_month = 1
+            elif 4 <= month <= 6:
+                season_month = 4
+            elif 7 <= month <= 9:
+                season_month = 7
+            else:
+                season_month = 10
+                
+            # 返回标签
+            return f"{year}年{season_month}月番"
+        except Exception as e:
+            logger.error(f"生成季度标签失败：{str(e)}")
+            return None
+
+    def _update_item_tags(self, server: str, server_type: str, item_id: str, current_tags: List[str], new_tag: str) -> bool:
+        """
+        更新媒体标签
+        """
+        try:
+            # 构造标签数据
+            tags = {"Tags": [{"Name": new_tag}]}
+            
+            # 添加标签
+            req_url = f"{self._EMBY_HOST}emby/Items/{item_id}/Tags/Add?api_key={self._EMBY_APIKEY}"
+            with RequestUtils(content_type="application/json").post_res(url=req_url, json=tags) as res:
+                if res and res.status_code == 204:
+                    return True
+                else:
+                    logger.error(f"添加标签失败，错误码：{res.status_code if res else 'None'}")
+                    return False
+        except Exception as e:
+            logger.error(f"更新标签失败：{str(e)}")
             return False
