@@ -114,13 +114,12 @@ class SeasonalTags(_PluginBase):
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
-        拼装插件配置页面
+        插件配置页面
         """
         return [
             {
                 "component": "VForm",
                 "content": [
-                    # 启用开关和立即运行开关
                     {
                         'component': 'VRow',
                         'content': [
@@ -158,7 +157,6 @@ class SeasonalTags(_PluginBase):
                             }
                         ]
                     },
-                    # Cron表达式
                     {
                         'component': 'VRow',
                         'content': [
@@ -173,14 +171,13 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'model': 'cron',
                                             'label': '执行周期',
-                                            'placeholder': '5位cron表达式，如：0 0 * * *'
+                                            'placeholder': '5位cron表达式，留空自动'
                                         }
                                     }
                                 ]
                             }
                         ]
                     },
-                    # 媒体服务器选择
                     {
                         'component': 'VRow',
                         'content': [
@@ -205,7 +202,6 @@ class SeasonalTags(_PluginBase):
                             }
                         ]
                     },
-                    # 媒体库输入框
                     {
                         'component': 'VRow',
                         'content': [
@@ -218,56 +214,10 @@ class SeasonalTags(_PluginBase):
                                     {
                                         'component': 'VTextarea',
                                         'props': {
-                                            'model': 'library_text',
-                                            'label': '媒体库名称',
-                                            'placeholder': '每行输入一个媒体库名称',
-                                            'rows': 3,
-                                            'persistent-placeholder': True,
-                                            'hide-details': False,
-                                            'disabled': False
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    # 说明文本
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VAlert',
-                                        'props': {
-                                            'type': 'info',
-                                            'variant': 'tonal',
-                                            'text': '选择媒体服务器后，输入需要添加季度标签的媒体库名称，每行一个。将根据剧集的首播时间自动添加对应季度标签。'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
                                             'model': 'target_libraries',
                                             'label': '目标媒体库',
-                                            'placeholder': '媒体库名称，多个用英文逗号分隔'
+                                            'placeholder': '每行输入一个媒体库名称',
+                                            'rows': 2,
                                         }
                                     }
                                 ]
@@ -280,9 +230,8 @@ class SeasonalTags(_PluginBase):
             "enabled": False,
             "onlyonce": False,
             "cron": "5 1 * * *",
-            "mediaserver": None,
-            "library_text": "",
-            "target_libraries": ""
+            "target_libraries": "",
+            "mediaservers": []
         }
 
     def __get_air_date(self, tmdb_id: int) -> str:
