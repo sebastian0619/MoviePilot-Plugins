@@ -6,10 +6,11 @@ from typing import Any, Dict, List, Tuple
 from app.core.config import settings
 from app.core.event import eventmanager, Event
 from app.plugins import _PluginBase
-from app.core.meta.mediainfo import MetaInfo
+from app.schemas.types import MediaType
 from app.utils.types import EventType
 from app.log import logger
-from app.helper.notification import NotificationHelper
+from app.helper.module import ModuleHelper
+from app.helper.meta import MetaHelper
 from app.db.models.transferhistory import TransferHistory
 from datetime import datetime
 import os
