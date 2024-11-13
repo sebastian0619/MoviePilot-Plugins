@@ -74,14 +74,6 @@ class SeasonalTags(_PluginBase):
         拼装插件配置页面
         返回: (表单配置, 默认值)
         """
-        # 获取媒体服务器列表
-        mediaserver_list = []
-        for item in self.mediaserver_helper.get_services():
-            mediaserver_list.append({
-                "title": item.name,
-                "value": item.id
-            })
-        
         return [
             {
                 'component': 'VForm',
@@ -137,9 +129,13 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'multiple': True,
                                             'chips': True,
+                                            'clearable': True,
                                             'model': 'mediaservers',
                                             'label': '媒体服务器',
-                                            'items': mediaserver_list
+                                            'items': [
+                                                {"title": config.name, "value": config.name}
+                                                for config in self.mediaserver_helper.get_configs().values()
+                                            ]
                                         }
                                     }
                                 ]
@@ -243,59 +239,47 @@ class SeasonalTags(_PluginBase):
         """
         处理季度标签
         """
-        if not self._enabled or not self._paths:
+        if not self._enabled:
             return
 
         # 获取媒体服务器
-        service_infos = self.service_infos()
-        if not service_infos:
+        media_servers = self.mediaserver_helper.get_services(
+            name_filters=self._mediaservers
+        )
+        if not media_servers:
+            logger.error("未配置媒体服务器")
             return
 
-        for path in self._paths.splitlines():
-            if not path.strip():
+        # 处理每个媒体服务器
+        for server_name, server_info in media_servers.items():
+            logger.info(f"处理媒体服务器: {server_name}")
+            
+            # 获取媒体信息
+            mediainfo = self.chain.recognize_media(path=self._paths)
+            if not mediainfo:
+                logger.error(f"无法识别媒体信息: {self._paths}")
                 continue
 
-            logger.info(f"处理目录: {path}")
-            
-            try:
-                # 获取媒体信息
-                mediainfo = self.chain.recognize_media(path=path)
-                if not mediainfo:
-                    logger.error(f"无法识别媒体信息: {path}")
-                    continue
+            # 获取首播月份标签
+            seasonal_tag = self.__get_air_date(mediainfo.tmdb_id)
+            if not seasonal_tag:
+                logger.error(f"无法获取首播月份: {self._paths}")
+                continue
 
-                # 获取首播月份标签
-                seasonal_tag = self.__get_air_date(mediainfo.tmdb_id)
-                if not seasonal_tag:
-                    logger.error(f"无法获取首播月份: {path}")
-                    continue
+            # 查找媒体库中的对应媒体
+            existsinfo = self.chain.media_exists(mediainfo=mediainfo)
+            if not existsinfo:
+                logger.error(f"未找到媒体: {mediainfo.title}")
+                continue
 
-                # 为每个媒体服务器添加标签
-                for server_name, server_info in service_infos.items():
-                    logger.info(f"处理媒体服务器: {server_name}")
-                    
-                    # 查找媒体库中的对应媒体
-                    existsinfo = self.chain.media_exists(mediainfo=mediainfo)
-                    if not existsinfo:
-                        logger.error(f"未找到媒体: {mediainfo.title}")
-                        continue
-
-                    # 添加标签
-                    if self.__add_tag(server=server_name, 
-                                    item_id=existsinfo.itemid, 
-                                    tag=seasonal_tag):
-                        if self._notify:
-                            self.post_message(
-                                title=f"季度番剧标签{'(测试)' if self._test_mode else ''}",
-                                text=f"{mediainfo.title} 添加标签: {seasonal_tag}"
-                            )
-
-            except Exception as e:
-                logger.error(f"处理失败: {str(e)}")
+            # 添加标签
+            if self.__add_tag(server=server_name, 
+                            item_id=existsinfo.itemid, 
+                            tag=seasonal_tag):
                 if self._notify:
                     self.post_message(
-                        title="季度番剧标签 - 错误",
-                        text=f"处理 {path} 时出错: {str(e)}"
+                        title=f"季度番剧标签{'(测试)' if self._test_mode else ''}",
+                        text=f"{mediainfo.title} 添加标签: {seasonal_tag}"
                     )
 
     def service_infos(self) -> Optional[Dict[str, ServiceInfo]]:
