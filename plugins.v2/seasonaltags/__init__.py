@@ -45,6 +45,7 @@ class SeasonalTags(_PluginBase):
     _libraries = []  # 改为存储媒体库选择
     _scheduler = None
     _clean_enabled = False  # 添加清理开关状态
+    _notify_enabled = False  # 添加通知开关状态
     
     # 链式调用
     tmdbchain = None
@@ -58,6 +59,7 @@ class SeasonalTags(_PluginBase):
         self._EMBY_USER = None
         self._mediaserver = None
         self._clean_enabled = False  # 添加清理开关状态
+        self._notify_enabled = False  # 添加通知开关初始状态
         # 初始化历史记录
         self.history_data = self.get_data('history') or {}
 
@@ -75,6 +77,7 @@ class SeasonalTags(_PluginBase):
         if config:
             self._enabled = config.get("enabled")
             self._clean_enabled = config.get("clean_enabled")  # 读取清理开关状态
+            self._notify_enabled = config.get("notify_enabled")  # 读取通知开关状态
             self._onlyonce = config.get("onlyonce")
             self._cron = config.get("cron")
             self._mediaserver = config.get("mediaserver")
@@ -137,6 +140,7 @@ class SeasonalTags(_PluginBase):
         self.update_config({
             "enabled": self._enabled,
             "clean_enabled": self._clean_enabled,  # 保存清理开关状态
+            "notify_enabled": self._notify_enabled,  # 保存通知开关状态
             "onlyonce": self._onlyonce,
             "cron": self._cron,
             "mediaserver": self._mediaserver,
@@ -198,6 +202,22 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'model': 'onlyonce',
                                             'label': '立即运行一次',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'notify_enabled',
+                                            'label': '开启通知',
                                         }
                                     }
                                 ]
@@ -263,7 +283,7 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'model': 'target_libraries',
                                             'label': '目标媒体库',
-                                            'placeholder': '每行输入一个媒体库名称',
+                                            'placeholder': '多个媒体库用英文逗号隔开',
                                             'rows': 2,
                                         }
                                     }
@@ -276,6 +296,7 @@ class SeasonalTags(_PluginBase):
         ], {
             "enabled": False,
             "clean_enabled": False,  # 添加清理开关默认值
+            "notify_enabled": False,  # 添加通知开关默认值
             "onlyonce": False,
             "cron": "5 1 * * *",
             "target_libraries": "",
@@ -371,7 +392,7 @@ class SeasonalTags(_PluginBase):
                         if not seasons:
                             continue
                         
-                        # 用于存储所有需要添加的季度标签
+                        # 用于存储所有需要添加的季���标签
                         season_tags = set()
                         
                         # 处理每一季
@@ -380,7 +401,7 @@ class SeasonalTags(_PluginBase):
                             if season.season_number == 0:
                                 continue
                             
-                            # 获取该��的首播日期
+                            # 获取该的首播日期
                             if not season.air_date:
                                 continue
                             
@@ -425,15 +446,36 @@ class SeasonalTags(_PluginBase):
                 
             # 处理完成后输出统计信息
             logger.info("="*50)
-            logger.info("季度标��处理完成！")
+            logger.info("季度标签处理完成！")
             logger.info(f"处理项目数: {processed_items}")
             logger.info(f"更新标签数: {updated_items}")
             if self._clean_enabled:
                 logger.info(f"清理标签数: {cleaned_items}")
             logger.info("="*50)
             
+            # 添加处理完成通知
+            if self._notify_enabled:
+                message = (
+                    f"季度标签处理完成！\n"
+                    f"处理项目数: {processed_items}\n"
+                    f"更新标签数: {updated_items}"
+                )
+                if self._clean_enabled:
+                    message += f"\n清理标签数: {cleaned_items}"
+                    
+                self.post_message(
+                    title="季度标签处理完成",
+                    text=message
+                )
+                
         except Exception as e:
             logger.error(f"处理季度标签时出错：{str(e)}")
+            # 添加错误通知
+            if self._notify_enabled:
+                self.post_message(
+                    title="季度标签处理出错",
+                    text=f"错误信息：{str(e)}"
+                )
 
     def _get_item_tags(self, server, item_id: str) -> List[str]:
         """
@@ -1261,3 +1303,16 @@ class SeasonalTags(_PluginBase):
             
         # 保存历史记录
         self.save_data('history', self.history_data)
+
+    def post_message(self, channel: Any = None, title: str = None, text: str = None, image: str = None, userid: str = None):
+        """
+        发送消息
+        """
+        if not self._notify_enabled:  # 检查通知开关状态
+            return
+            
+        super().post_message(channel=channel, 
+                           title=title, 
+                           text=text, 
+                           image=image, 
+                           userid=userid)
