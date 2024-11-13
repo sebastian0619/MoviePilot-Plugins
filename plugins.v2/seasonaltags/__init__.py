@@ -4,16 +4,32 @@ SeasonalTags插件
 """
 from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime
+from dataclasses import dataclass
+
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
 from app.plugins import _PluginBase
-from app.schemas.types import MediaType, SystemConfigKey, ModuleType
+from app.schemas.types import MediaType, SystemConfigKey, ModuleType, ServiceInfo 
 from app.log import logger
-from app.helper.module import ModuleHelper
-from app.helper.service import ServiceBaseHelper
-from app.schemas import MediaServerConf
+from app.helper.mediaserver import MediaServerHelper
 from app.chain.tmdb import TmdbChain
 from app.chain.mediaserver import MediaServerChain
+
+@dataclass
+class ServiceInfo:
+    """
+    封装服务相关信息的数据类
+    """
+    # 名称
+    name: Optional[str] = None
+    # 实例
+    instance: Optional[Any] = None
+    # 模块
+    module: Optional[Any] = None
+    # 类型
+    type: Optional[str] = None
+    # 配置
+    config: Optional[Any] = None
 
 class SeasonalTags(_PluginBase):
     # 插件基础信息
