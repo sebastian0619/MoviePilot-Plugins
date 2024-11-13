@@ -69,9 +69,10 @@ class SeasonalTags(_PluginBase):
             self._notify = config.get("notify")
             self._test_mode = config.get("test_mode")
 
-    def get_form(self) -> List[dict]:
+    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
-        拼装插件配置页面，需要返回配置页面相关信息
+        拼装插件配置页面
+        返回: (表单配置, 默认值)
         """
         # 获取媒体服务器列表
         mediaserver_list = []
@@ -86,45 +87,117 @@ class SeasonalTags(_PluginBase):
                 'component': 'VForm',
                 'content': [
                     {
-                        'component': 'VSwitch',
-                        'props': {
-                            'label': '启用插件',
-                            'v-model': 'enabled'
-                        }
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 6
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'enabled',
+                                            'label': '启用插件'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 6
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'test_mode',
+                                            'label': '测试模式'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
                     },
                     {
-                        'component': 'VTextField',
-                        'props': {
-                            'label': '执行周期',
-                            'v-model': 'cron',
-                            'placeholder': '5 4 * * *'
-                        }
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSelect',
+                                        'props': {
+                                            'multiple': True,
+                                            'chips': True,
+                                            'model': 'mediaservers',
+                                            'label': '媒体服务器',
+                                            'items': mediaserver_list
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
                     },
                     {
-                        'component': 'VSelect',
-                        'props': {
-                            'label': '媒体服务器',
-                            'v-model': 'mediaservers',
-                            'items': mediaserver_list
-                        }
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'cron',
+                                            'label': '执行周期',
+                                            'placeholder': '5 4 * * *'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
                     },
                     {
-                        'component': 'VSwitch',
-                        'props': {
-                            'label': '发送通知',
-                            'v-model': 'notify'
-                        }
-                    },
-                    {
-                        'component': 'VSwitch',
-                        'props': {
-                            'label': '测试模式',
-                            'v-model': 'test_mode'
-                        }
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'paths',
+                                            'label': '监控目录',
+                                            'placeholder': '每行一个目录'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
                     }
                 ]
             }
-        ]
+        ], {
+            'enabled': False,
+            'test_mode': False,
+            'notify': False,
+            'cron': '5 4 * * *',
+            'paths': '',
+            'mediaservers': []
+        }
 
     def __get_air_date(self, tmdb_id: int) -> str:
         """
@@ -268,4 +341,15 @@ class SeasonalTags(_PluginBase):
         """
         停止服务
         """
-        pass 
+        try:
+            # 停止定时任务
+            if self._scheduler:
+                self._scheduler.remove_all_jobs()
+                if self._scheduler.running:
+                    self._event.set()
+                    self._scheduler.shutdown()
+                    self._event.clear()
+                self._scheduler = None
+            logger.info(f"插件 {self.plugin_name} 服务已停止")
+        except Exception as e:
+            logger.error(f"插件 {self.plugin_name} 停止服务失败: {str(e)}")
