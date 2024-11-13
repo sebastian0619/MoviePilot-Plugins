@@ -5,6 +5,7 @@ SeasonalTags插件
 from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime
 from dataclasses import dataclass
+import threading
 
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
@@ -15,6 +16,8 @@ from app.log import logger
 from app.helper.mediaserver import MediaServerHelper
 from app.chain.tmdb import TmdbChain
 from app.chain.mediaserver import MediaServerChain
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 @dataclass
 class ServiceInfo:
@@ -42,6 +45,9 @@ class SeasonalTags(_PluginBase):
     plugin_order = 21
     auth_level = 1
 
+    # 退出事件
+    _event = threading.Event()
+    
     # 私有属性
     _enabled = False
     _cron = None
@@ -49,32 +55,19 @@ class SeasonalTags(_PluginBase):
     _mediaservers = None
     _notify = False
     _test_mode = False
+    _scheduler = None
     
     # 链式调用
     tmdbchain = None
     mschain = None
     mediaserver_helper = None
 
-    # 添加定时任务相关属性
-    _scheduler = None
-    _event = None
-
     def init_plugin(self, config: dict = None):
         """
         插件初始化
         """
-        # 初始化事件
-        self._event = Event()
-        
-        # 初始化定时任务
-        if self._scheduler:
-            try:
-                self._scheduler.remove_all_jobs()
-                if self._scheduler.running:
-                    self._scheduler.shutdown()
-                self._scheduler = None
-            except Exception as e:
-                logger.error(f"停止定时任务失败: {str(e)}")
+        # 停止现有任务
+        self.stop_service()
         
         # 初始化链式调用
         self.tmdbchain = TmdbChain()
@@ -88,6 +81,14 @@ class SeasonalTags(_PluginBase):
             self._mediaservers = config.get("mediaservers") or []
             self._notify = config.get("notify")
             self._test_mode = config.get("test_mode")
+            
+            # 启动定时任务
+            if self._enabled and self._cron:
+                self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                self._scheduler.add_job(self.process_seasonal_tags,
+                                      CronTrigger.from_crontab(self._cron))
+                self._scheduler.start()
+                logger.info(f"季度番剧标签服务启动，周期：{self._cron}")
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
@@ -255,13 +256,10 @@ class SeasonalTags(_PluginBase):
         return False
 
     @eventmanager.register(EventType.PluginAction)
-    def process_seasonal_tags(self, event: Event = None):
+    def process_seasonal_tags(self):
         """
         处理季度标签
         """
-        if not self._enabled:
-            return
-
         # 获取媒体服务器
         media_servers = self.mediaserver_helper.get_services(
             name_filters=self._mediaservers
@@ -269,38 +267,80 @@ class SeasonalTags(_PluginBase):
         if not media_servers:
             logger.error("未配置媒体服务器")
             return
-
+            
         # 处理每个媒体服务器
         for server_name, server_info in media_servers.items():
-            logger.info(f"处理媒体服务器: {server_name}")
+            logger.info(f"开始处理媒体服务器：{server_name}")
             
-            # 获取媒体信息
-            mediainfo = self.chain.recognize_media(path=self._paths)
-            if not mediainfo:
-                logger.error(f"无法识别媒体信息: {self._paths}")
+            # 获取媒体库
+            librarys = server_info.instance.get_librarys()
+            if not librarys:
+                logger.error(f"{server_name} 获取媒体库失败")
                 continue
-
-            # 获取首播月份标签
-            seasonal_tag = self.__get_air_date(mediainfo.tmdb_id)
-            if not seasonal_tag:
-                logger.error(f"无法获取首播月份: {self._paths}")
-                continue
-
-            # 查找媒体库中的对应媒体
-            existsinfo = self.chain.media_exists(mediainfo=mediainfo)
-            if not existsinfo:
-                logger.error(f"未找到媒体: {mediainfo.title}")
-                continue
-
-            # 添加标签
-            if self.__add_tag(server=server_name, 
-                            item_id=existsinfo.itemid, 
-                            tag=seasonal_tag):
-                if self._notify:
-                    self.post_message(
-                        title=f"季度番剧标签{'(测试)' if self._test_mode else ''}",
-                        text=f"{mediainfo.title} 添加标签: {seasonal_tag}"
+                
+            # 处理每个媒体库
+            for library in librarys:
+                logger.info(f"开始处理媒体库：{library.name}")
+                
+                # 获取媒体库中的项目
+                items = server_info.instance.get_items(library.id)
+                if not items:
+                    continue
+                    
+                # 处理每个项目
+                for item in items:
+                    if not item:
+                        continue
+                        
+                    # 获取当前标签
+                    current_tags = self._get_item_tags(
+                        server=server_info.instance,
+                        item_id=item.item_id
                     )
+                    
+                    # 计算季度标签
+                    season_tag = self._calculate_season_tag(item)
+                    if not season_tag:
+                        continue
+                        
+                    # 添加标签
+                    if season_tag not in current_tags:
+                        self._add_tag(
+                            server=server_info.instance,
+                            item_id=item.item_id,
+                            tag=season_tag
+                        )
+                        logger.info(f"为 {item.title} 添加标签：{season_tag}")
+
+    def _get_item_tags(self, server, item_id: str) -> List[str]:
+        """
+        获取项目当前标签
+        """
+        try:
+            item_info = server.get_item_info(item_id)
+            return [tag.get('Name') for tag in item_info.get("TagItems", [])]
+        except Exception as e:
+            logger.error(f"获取标签失败：{str(e)}")
+            return []
+
+    def _add_tag(self, server, item_id: str, tag: str) -> bool:
+        """
+        添加标签
+        """
+        try:
+            tags = {"Tags": [{"Name": tag}]}
+            return server.add_tag(item_id, tags)
+        except Exception as e:
+            logger.error(f"添加标签失败：{str(e)}")
+            return False
+
+    def _calculate_season_tag(self, item) -> Optional[str]:
+        """
+        计算季度标签
+        """
+        # 根据项目添加时间或首播时间计算季度
+        # 返回对应的标签名称
+        pass
 
     def service_infos(self) -> Optional[Dict[str, ServiceInfo]]:
         """
@@ -346,7 +386,6 @@ class SeasonalTags(_PluginBase):
         停止服务
         """
         try:
-            # 停止定时任务
             if self._scheduler:
                 self._scheduler.remove_all_jobs()
                 if self._scheduler.running:
