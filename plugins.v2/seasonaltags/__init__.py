@@ -28,7 +28,6 @@ class SeasonalTags(_PluginBase):
     plugin_desc = "自动为Emby的动漫库添加季度标签（例：2024年10月番）"
     plugin_version = "1.0"
     plugin_author = "Sebas0619"
-    plugin_icon = "https://raw.githubusercontent.com/sebastian0619/MoviePilot-Plugins/main/icons/cloudcompanion.png"
     plugin_config_prefix = "seasonaltags_"
     plugin_order = 21
     author_url = "https://github.com/sebastian0619"
@@ -57,6 +56,8 @@ class SeasonalTags(_PluginBase):
         self._EMBY_USER = None
         self._mediaserver = None
         self._clean_enabled = False  # 添加清理开关状态
+        # 初始化历史记录
+        self.history_data = self.get_data('history') or {}
 
     def init_plugin(self, config: dict = None):
         """
@@ -377,7 +378,7 @@ class SeasonalTags(_PluginBase):
                             if season.season_number == 0:
                                 continue
                             
-                            # 获取该季的首播日期
+                            # 获取该��的首播日期
                             if not season.air_date:
                                 continue
                             
@@ -422,7 +423,7 @@ class SeasonalTags(_PluginBase):
                 
             # 处理完成后输出统计信息
             logger.info("="*50)
-            logger.info("季度标签处理完成！")
+            logger.info("季度标��处理完成！")
             logger.info(f"处理项目数: {processed_items}")
             logger.info(f"更新标签数: {updated_items}")
             if self._clean_enabled:
@@ -995,3 +996,266 @@ class SeasonalTags(_PluginBase):
             elif event_data.get("action") == "seasonaltags":
                 # ... 现有的手动处理代码 ...
                 pass
+
+    def get_dashboard(self, key: str, **kwargs) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], List[dict]]]:
+        """
+        获取插件仪表盘页面
+        """
+        # 列配置
+        cols = {
+            "cols": 12
+        }
+        # 全局配置
+        attrs = {
+            "refresh": 60  # 60秒自动刷新
+        }
+        
+        # 获取统计数据
+        statistics = self.__get_statistics()
+        
+        # 拼装页面元素
+        elements = [
+            # 顶部统计卡片
+            {
+                'component': 'VRow',
+                'content': [
+                    # 总处理数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3,
+                            'sm': 6
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal',
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [
+                                    {
+                                        'component': 'div',
+                                        'content': [
+                                            {
+                                                'component': 'span',
+                                                'props': {'class': 'text-caption'},
+                                                'text': '总处理数量'
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'props': {'class': 'text-h6'},
+                                                'text': f"{statistics['total_processed']}"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }]
+                        }]
+                    },
+                    # 成功处理数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3,
+                            'sm': 6
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal',
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [
+                                    {
+                                        'component': 'div',
+                                        'content': [
+                                            {
+                                                'component': 'span',
+                                                'props': {'class': 'text-caption'},
+                                                'text': '成功处理数量'
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'props': {'class': 'text-h6'},
+                                                'text': f"{statistics['success_count']}"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }]
+                        }]
+                    },
+                    # 失败数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3,
+                            'sm': 6
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal',
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [
+                                    {
+                                        'component': 'div',
+                                        'content': [
+                                            {
+                                                'component': 'span',
+                                                'props': {'class': 'text-caption'},
+                                                'text': '失败数量'
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'props': {'class': 'text-h6'},
+                                                'text': f"{statistics['failed_count']}"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }]
+                        }]
+                    },
+                    # 跳过数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3,
+                            'sm': 6
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal',
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [
+                                    {
+                                        'component': 'div',
+                                        'content': [
+                                            {
+                                                'component': 'span',
+                                                'props': {'class': 'text-caption'},
+                                                'text': '跳过数量'
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'props': {'class': 'text-h6'},
+                                                'text': f"{statistics['skipped_count']}"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }]
+                        }]
+                    }
+                ]
+            },
+            # 处理历史记录表格
+            {
+                'component': 'VRow',
+                'content': [{
+                    'component': 'VCol',
+                    'props': {
+                        'cols': 12
+                    },
+                    'content': [{
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'tonal',
+                        },
+                        'content': [{
+                            'component': 'VCardTitle',
+                            'content': '处理历史'
+                        }, {
+                            'component': 'VCardText',
+                            'content': [{
+                                'component': 'VTable',
+                                'props': {
+                                    'headers': [
+                                        {'title': '时间', 'key': 'time'},
+                                        {'title': '媒体标题', 'key': 'title'},
+                                        {'title': '原标签', 'key': 'old_tag'},
+                                        {'title': '新标签', 'key': 'new_tag'},
+                                        {'title': '状态', 'key': 'status'}
+                                    ],
+                                    'items': self.__get_history_items()
+                                }
+                            }]
+                        }]
+                    }]
+                }]
+            }
+        ]
+        
+        return cols, attrs, elements
+    def __get_statistics(self) -> dict:
+        """获取统计数据"""
+        return {
+            "total_processed": len(self.history_data),
+            "success_count": len([x for x in self.history_data.values() if x.get('status') == 'success']),
+            "failed_count": len([x for x in self.history_data.values() if x.get('status') == 'failed']),
+            "skipped_count": len([x for x in self.history_data.values() if x.get('status') == 'skipped'])
+        }
+        
+    def __get_history_items(self) -> List[dict]:
+        """获取历史记录表格数据"""
+        items = []
+        for item_id, data in self.history_data.items():
+            items.append({
+                'time': data.get('time'),
+                'title': data.get('title'),
+                'old_tag': data.get('old_tag'),
+                'new_tag': data.get('new_tag'), 
+                'status': data.get('status')
+            })
+        return sorted(items, key=lambda x: x['time'], reverse=True)
+        
+    def __is_processed(self, item_id: str) -> bool:
+        """检查是否已处理过"""
+        return item_id in self.history_data
+        
+    def process_item(self, item_id: str, title: str, old_tag: str):
+        """处理单个项目"""
+        # 检查是否已处理
+        if self.__is_processed(item_id):
+            logger.info(f"项目 {title} 已处理过,跳过")
+            return
+            
+        try:
+            # 处理标签逻辑
+            new_tag = self.__process_tag(old_tag)
+            
+            # 记录处理结果
+            self.history_data[item_id] = {
+                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'title': title,
+                'old_tag': old_tag,
+                'new_tag': new_tag,
+                'status': 'success'
+            }
+            
+        except Exception as e:
+            logger.error(f"处理失败: {str(e)}")
+            # 记录失败信息
+            self.history_data[item_id] = {
+                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'title': title,
+                'old_tag': old_tag,
+                'new_tag': None,
+                'status': 'failed',
+                'error': str(e)
+            }
+            
+        # 保存历史记录
+        self.save_data('history', self.history_data)
