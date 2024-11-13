@@ -13,6 +13,7 @@ from datetime import datetime
 import os
 import shutil
 from pathlib import Path
+from app.helper.notification import NotificationHelper
 
 class BangumiArchive(_PluginBase):
     # 插件基础信息
@@ -214,7 +215,7 @@ class BangumiArchive(_PluginBase):
                 create_time=datetime.now()
             ).save()
         except Exception as e:
-            logger.error(f"保存历��记录失败: {str(e)}")
+            logger.error(f"保存历记录失败: {str(e)}")
 
     def __process_directory(self, source_dir: str, target_dir: str, check_ended: bool = True):
         """
@@ -238,8 +239,8 @@ class BangumiArchive(_PluginBase):
             if not os.path.isdir(item_path):
                 continue
 
-            # 解析剧集信息
-            meta_info = MetaInfo(item)
+            # 获取元数据
+            meta_info = self.meta_helper.get_meta_info(item)
             if not meta_info.tmdb_id:
                 logger.warning(f"无法解析TMDB ID: {item}")
                 continue
