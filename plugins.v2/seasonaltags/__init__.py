@@ -55,7 +55,27 @@ class SeasonalTags(_PluginBase):
     mschain = None
     mediaserver_helper = None
 
+    # 添加定时任务相关属性
+    _scheduler = None
+    _event = None
+
     def init_plugin(self, config: dict = None):
+        """
+        插件初始化
+        """
+        # 初始化事件
+        self._event = Event()
+        
+        # 初始化定时任务
+        if self._scheduler:
+            try:
+                self._scheduler.remove_all_jobs()
+                if self._scheduler.running:
+                    self._scheduler.shutdown()
+                self._scheduler = None
+            except Exception as e:
+                logger.error(f"停止定时任务失败: {str(e)}")
+        
         # 初始化链式调用
         self.tmdbchain = TmdbChain()
         self.mschain = MediaServerChain()
