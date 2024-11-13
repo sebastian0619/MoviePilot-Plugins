@@ -28,6 +28,7 @@ class SeasonalTags(_PluginBase):
     plugin_desc = "自动为Emby的动漫库添加季度标签（例：2024年10月番）"
     plugin_version = "1.0"
     plugin_author = "Sebas0619"
+    plugin_icon = "https://raw.githubusercontent.com/sebastian0619/MoviePilot-Plugins/main/icons/cloudcompanion.png"
     plugin_config_prefix = "seasonaltags_"
     plugin_order = 21
     author_url = "https://github.com/sebastian0619"
