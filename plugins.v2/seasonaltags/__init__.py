@@ -2,7 +2,7 @@
 SeasonalTags插件
 用于自动添加季度标签
 """
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
@@ -12,6 +12,8 @@ from app.log import logger
 from app.helper.module import ModuleHelper
 from app.helper.service import ServiceBaseHelper
 from app.schemas import MediaServerConf
+from app.chain.tmdb import TmdbChain
+from app.chain.mediaserver import MediaServerChain
 
 class SeasonalTags(_PluginBase):
     # 插件基础信息
@@ -31,30 +33,22 @@ class SeasonalTags(_PluginBase):
     _notify = False
     _test_mode = False
     
-    # 媒体服务器相关
+    # 链式调用
+    tmdbchain = None
+    mschain = None
     mediaserver_helper = None
-    _mediaserver = None
-
-    # 在类中初始化
-    meta_helper = None
 
     def init_plugin(self, config: dict = None):
-        # 初始化媒体服务器
-        self.mediaserver_helper = ServiceBaseHelper(
-            config_key=SystemConfigKey.MediaServers,
-            conf_type=MediaServerConf,
-            module_type=ModuleType.MediaServer
-        )
-        
-        # 获取媒体服务器配置
-        if self._mediaservers:
-            self._mediaserver = self.mediaserver_helper.get_service(name=self._mediaservers)
+        # 初始化链式调用
+        self.tmdbchain = TmdbChain()
+        self.mschain = MediaServerChain()
+        self.mediaserver_helper = MediaServerHelper()
         
         if config:
             self._enabled = config.get("enabled")
             self._cron = config.get("cron")
             self._paths = config.get("paths")
-            self._mediaservers = config.get("mediaservers")
+            self._mediaservers = config.get("mediaservers") or []
             self._notify = config.get("notify")
             self._test_mode = config.get("test_mode")
 
@@ -120,23 +114,32 @@ class SeasonalTags(_PluginBase):
         获取首播日期
         """
         try:
-            meta = self.meta_helper.get_meta_info(tmdb_id=tmdb_id)
-            if meta.first_air_date:
-                air_date = datetime.strptime(meta.first_air_date, '%Y-%m-%d')
+            # 使用 TmdbChain 获取剧集详情
+            series_detail = self.tmdbchain.tv_detail(tmdb_id)
+            if not series_detail:
+                return None
+            
+            if series_detail.first_air_date:
+                air_date = datetime.strptime(series_detail.first_air_date, '%Y-%m-%d')
                 return f"{air_date.year}年{air_date.month:02d}月番"
         except Exception as e:
             logger.error(f"获取首播日期失败: {str(e)}")
         return None
 
-    def __add_tag(self, item_id: str, tag: str, emby_server) -> bool:
+    def __add_tag(self, server: str, item_id: str, tag: str) -> bool:
         """
         添加标签
         """
         try:
-            current_tags = emby_server.instance.get_item_tags(item_id)
+            # 获取当前标签
+            current_tags = self.mschain.get_item_tags(server=server, item_id=item_id)
+            if not current_tags:
+                current_tags = []
+                
             if tag not in current_tags:
                 if not self._test_mode:
-                    emby_server.instance.add_tag(item_id, tag)
+                    # 使用 MediaServerChain 添加标签
+                    self.mschain.add_tag(server=server, item_id=item_id, tag=tag)
                 logger.info(f"添加标签: {tag}")
                 return True
             else:
@@ -153,13 +156,9 @@ class SeasonalTags(_PluginBase):
         if not self._enabled or not self._paths:
             return
 
-        # 获取Emby服务器
-        emby_servers = self.mediaserver_helper.get_services(
-            name_filters=self._mediaservers, 
-            type_filter="emby"
-        )
-        if not emby_servers:
-            logger.error("未配置Emby媒体服务器")
+        # 获取媒体服务器
+        service_infos = self.service_infos()
+        if not service_infos:
             return
 
         for path in self._paths.splitlines():
@@ -169,41 +168,37 @@ class SeasonalTags(_PluginBase):
             logger.info(f"处理目录: {path}")
             
             try:
-                # 获取目录下的所有剧集
-                meta_info = self.meta_helper.get_meta_info(path)
-                if not meta_info.tmdb_id:
-                    logger.error(f"无法获取TMDB ID: {path}")
+                # 获取媒体信息
+                mediainfo = self.chain.recognize_media(path=path)
+                if not mediainfo:
+                    logger.error(f"无法识别媒体信息: {path}")
                     continue
 
                 # 获取首播月份标签
-                seasonal_tag = self.__get_air_date(meta_info.tmdb_id)
+                seasonal_tag = self.__get_air_date(mediainfo.tmdb_id)
                 if not seasonal_tag:
                     logger.error(f"无法获取首播月份: {path}")
                     continue
 
-                # 为每个Emby服务器添加标签
-                for emby_name, emby_server in emby_servers.items():
-                    logger.info(f"处理媒体服务器: {emby_name}")
+                # 为每个媒体服务器添加标签
+                for server_name, server_info in service_infos.items():
+                    logger.info(f"处理媒体服务器: {server_name}")
                     
-                    # 查找对应的媒体项
-                    items = emby_server.instance.get_items(
-                        parent_id=None,
-                        media_type="Series",
-                        name=meta_info.title
-                    )
-
-                    if not items:
-                        logger.error(f"未找到媒体: {meta_info.title}")
+                    # 查找媒体库中的对应媒体
+                    existsinfo = self.chain.media_exists(mediainfo=mediainfo)
+                    if not existsinfo:
+                        logger.error(f"未找到媒体: {mediainfo.title}")
                         continue
 
                     # 添加标签
-                    for item in items:
-                        if self.__add_tag(item.id, seasonal_tag, emby_server):
-                            if self._notify:
-                                self.post_message(
-                                    title=f"季度番剧标签{'(测试)' if self._test_mode else ''}",
-                                    text=f"{meta_info.title} 添加标签: {seasonal_tag}"
-                                )
+                    if self.__add_tag(server=server_name, 
+                                    item_id=existsinfo.itemid, 
+                                    tag=seasonal_tag):
+                        if self._notify:
+                            self.post_message(
+                                title=f"季度番剧标签{'(测试)' if self._test_mode else ''}",
+                                text=f"{mediainfo.title} 添加标签: {seasonal_tag}"
+                            )
 
             except Exception as e:
                 logger.error(f"处理失败: {str(e)}")
@@ -212,6 +207,21 @@ class SeasonalTags(_PluginBase):
                         title="季度番剧标签 - 错误",
                         text=f"处理 {path} 时出错: {str(e)}"
                     )
+
+    def service_infos(self) -> Optional[Dict[str, ServiceInfo]]:
+        """
+        获取媒体服务器信息
+        """
+        if not self._mediaservers:
+            logger.warning("尚未配置媒体服务器，请检查配置")
+            return None
+
+        services = self.mediaserver_helper.get_services(name_filters=self._mediaservers)
+        if not services:
+            logger.warning("获取媒体服务器实例失败，请检查配置")
+            return None
+
+        return services
 
     def get_state(self) -> bool:
         """

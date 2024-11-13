@@ -14,6 +14,7 @@ import os
 import shutil
 from pathlib import Path
 from app.helper.notification import NotificationHelper
+from app.chain.tmdb import TmdbChain
 
 class BangumiArchive(_PluginBase):
     # 插件基础信息
@@ -44,10 +45,12 @@ class BangumiArchive(_PluginBase):
     
     # 在类中初始化
     meta_helper = None
+    tmdbchain = None
     
     def init_plugin(self, config: dict = None):
-        # 初始化 ModuleHelper
+        # 初始化 ModuleHelper 和 TmdbChain
         self.meta_helper = ModuleHelper()
+        self.tmdbchain = TmdbChain()
         
         if config:
             self._enabled = config.get("enabled")
@@ -174,25 +177,25 @@ class BangumiArchive(_PluginBase):
             return False, "无TMDB ID"
         
         try:
-            # 调用TMDB API
-            tmdb_info = self.chain.tmdb.get_tv_detail(tmdb_id)
-            if not tmdb_info:
+            # 使用 TmdbChain 获取剧集详情
+            series_detail = self.tmdbchain.tv_detail(tmdb_id)
+            if not series_detail:
                 return False, "无TMDB信息"
             
-            status = tmdb_info.get('status', '').lower()
+            # 获取状态
+            status = series_detail.status.lower() if series_detail.status else ''
             
             # 检查完结状态
             if status in self.END_STATUS:
                 return True, status
             
             # 检查最后播出日期
-            last_air_date = tmdb_info.get('last_air_date')
-            if last_air_date:
+            if series_detail.last_air_date:
                 try:
-                    last_date = datetime.strptime(last_air_date, '%Y-%m-%d')
+                    last_date = datetime.strptime(series_detail.last_air_date, '%Y-%m-%d')
                     # 如果最后播出超过1年，也认为是完结
                     if (datetime.now() - last_date).days > 365:
-                        return True, f"最后播出日期 {last_air_date}"
+                        return True, f"最后播出日期 {series_detail.last_air_date}"
                 except:
                     pass
             
@@ -242,8 +245,8 @@ class BangumiArchive(_PluginBase):
                 continue
 
             # 获取元数据
-            meta_info = self.meta_helper.get_meta_info(item)
-            if not meta_info.tmdb_id:
+            meta_info = self.meta_helper.get_media_info(item)
+            if not meta_info or not meta_info.tmdb_id:
                 logger.warning(f"无法解析TMDB ID: {item}")
                 continue
 
@@ -433,3 +436,11 @@ class BangumiArchive(_PluginBase):
 
     def stop_service(self):
         pass
+
+    def check_status(self, tmdb_id: int):
+        # 获取剧集详情
+        series_detail = self.tmdbchain.tv_detail(tmdb_id)
+        if series_detail:
+            # 检查状态
+            status = series_detail.status
+            return status in self.END_STATUS
