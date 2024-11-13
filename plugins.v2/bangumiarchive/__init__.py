@@ -214,7 +214,7 @@ class BangumiArchive(_PluginBase):
                 create_time=datetime.now()
             ).save()
         except Exception as e:
-            logger.error(f"保存历史记录失败: {str(e)}")
+            logger.error(f"保存历��记录失败: {str(e)}")
 
     def __process_directory(self, source_dir: str, target_dir: str, check_ended: bool = True):
         """
@@ -409,3 +409,15 @@ class BangumiArchive(_PluginBase):
                 ]
             }
         ] 
+
+    def get_state(self) -> bool:
+        return self._enabled
+    
+    def get_command(self) -> List[Dict[str, Any]]:
+        return []
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        return []
+
+    def stop_service(self):
+        pass
