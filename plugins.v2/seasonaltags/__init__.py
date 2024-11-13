@@ -1,9 +1,8 @@
 from typing import Any, Dict, List, Tuple
 from app.core.config import settings
-from app.core.event import eventmanager, Event
+from app.core.event import eventmanager, Event, EventType
 from app.plugins import _PluginBase
 from app.schemas.types import MediaType
-from app.schemas import EventType
 from app.log import logger
 from app.helper.module import ModuleHelper
 from app.helper.meta import MetaHelper
