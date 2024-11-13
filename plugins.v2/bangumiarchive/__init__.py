@@ -46,7 +46,9 @@ class BangumiArchive(_PluginBase):
     meta_helper = None
     
     def init_plugin(self, config: dict = None):
-        self.meta_helper = ModuleHelper().get_meta_helper()
+        # 初始化 ModuleHelper
+        self.meta_helper = ModuleHelper()
+        
         if config:
             self._enabled = config.get("enabled")
             self._cron = config.get("cron")
@@ -324,7 +326,7 @@ class BangumiArchive(_PluginBase):
                 logger.error(f"处理目录出错: {str(e)}")
                 self.__send_notification(
                     title="番剧归档 - 错误",
-                    text=f"处理目录时出错: {str(e)}"
+                    text=f"��理目录时出错: {str(e)}"
                 )
 
     def get_page(self) -> List[dict]:

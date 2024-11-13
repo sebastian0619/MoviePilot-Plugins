@@ -39,7 +39,7 @@ class SeasonalTags(_PluginBase):
 
     def init_plugin(self, config: dict = None):
         self.mediaserver_helper = ModuleHelper()
-        self.meta_helper = ModuleHelper().get_meta_helper()
+        self.meta_helper = ModuleHelper()
         if config:
             self._enabled = config.get("enabled")
             self._cron = config.get("cron")
