@@ -20,22 +20,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from app.utils.http import RequestUtils
 
-@dataclass
-class ServiceInfo:
-    """
-    封装服务相关信息的数据类
-    """
-    # 名称
-    name: Optional[str] = None
-    # 实例
-    instance: Optional[Any] = None
-    # 模块
-    module: Optional[Any] = None
-    # 类型
-    type: Optional[str] = None
-    # 配置
-    config: Optional[Any] = None
-
 class SeasonalTags(_PluginBase):
     # 插件基础信息
     plugin_name = "季度番剧标签"
