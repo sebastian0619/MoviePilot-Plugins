@@ -11,6 +11,7 @@ from app.schemas.types import MediaType
 from app.log import logger
 from app.helper.module import ModuleHelper
 from datetime import datetime
+from app.chain.tmdb import TmdbChain
 import os
 import shutil
 from pathlib import Path
@@ -22,12 +23,15 @@ from app.schemas import NotificationType
 import pytz
 from datetime import timedelta
 import time
+import re
+import traceback
 
 class BangumiArchive(_PluginBase):
     # 插件基础信息
     plugin_name = "连载番剧归档"
     plugin_desc = "自动检测连载目录中的番剧，识别完结情况并归档到完结目录"
     plugin_version = "1.3"
+    plugin_icon = "emby.png"
     plugin_author = "Sebastian0619"
     author_url = "https://github.com/sebastian0619"
     plugin_config_prefix = "bangumiarchive_"
@@ -44,14 +48,8 @@ class BangumiArchive(_PluginBase):
     _bidirectional = False
     _end_after_days = 730  # 默认730天(2年)
 
-    # 完结状态列表
-    END_STATUS = [
-        'ended',           # 正常完结
-        'canceled',        # 被取消
-        'completed',       # 完成
-        'released',        # 已发布（适用于剧场版）
-        'discontinued'     # 停播
-    ]
+    # 状态常量定义
+    END_STATUS = {"Ended", "Canceled"}
     
     # 在类中初始化
     meta_helper = None
@@ -64,6 +62,11 @@ class BangumiArchive(_PluginBase):
         "end_to_airing": [],    # 完结->连载
         "failed": []           # 处理失败
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 初始化 tmdbchain 属性
+        self.tmdbchain = TmdbChain()  # 使用导入的 TmdbChain 类进行实例化
 
     def init_plugin(self, config: dict = None):
         """
@@ -106,6 +109,9 @@ class BangumiArchive(_PluginBase):
                             logger.info(f"周期任务已启动，执行周期：{self._cron}")
                     except Exception as err:
                         logger.error(f"周期任务启动失败：{str(err)}")
+            
+            # 验证历史记录格式
+            self.__verify_history_format()
         except Exception as e:
             logger.error(f"插件初始化失败: {str(e)}")
 
@@ -275,144 +281,223 @@ class BangumiArchive(_PluginBase):
 
     def __send_notification(self):
         """
-        发送汇总通知
+        发送通知
         """
         if not self._notify:
             return
-            
+        
         try:
-            messages = []
+            # 构建通知内容
+            message_lines = []
+            has_content = False
             
-            # 添加连载->完结的信息
+            # 添加连载->完结的记录
             if self._transfer_messages["airing_to_end"]:
-                messages.append("【完结归档】")
-                messages.extend(self._transfer_messages["airing_to_end"])
-                messages.append("")  # 空行分隔
+                has_content = True
+                message_lines.append("\n【连载->完结】")
+                for msg in self._transfer_messages["airing_to_end"]:
+                    message_lines.append(msg)
                 
-            # 添加完结->连载的信息
+            # 添加完结->连载的记录
             if self._transfer_messages["end_to_airing"]:
-                messages.append("【恢复连载】")
-                messages.extend(self._transfer_messages["end_to_airing"])
-                messages.append("")  # 空行分隔
+                has_content = True
+                message_lines.append("\n【完结->连载】")
+                for msg in self._transfer_messages["end_to_airing"]:
+                    message_lines.append(msg)
                 
-            # 添加失败信息
+            # 添加处理失败的记录
             if self._transfer_messages["failed"]:
-                messages.append("【处理失败】")
-                messages.extend(self._transfer_messages["failed"])
-                
-            # 如果有消息才发送通知
-            if messages:
+                has_content = True
+                if message_lines:  # 如果前面有其他消息，添加一个空行
+                    message_lines.append("")
+                message_lines.append("【处理失败】")
+                for msg in self._transfer_messages["failed"]:
+                    message_lines.append(msg)
+                    
+            # 如果有消息要发送
+            if has_content:
                 self.post_message(
                     mtype=NotificationType.SiteMessage,
                     title="【番剧归档处理结果】",
-                    text="\n".join(messages)
+                    text="\n".join(message_lines)
                 )
+            else:
+                logger.info("没有需要通知的内容")
                 
-            # 清空消息列表
-            self._transfer_messages = {
-                "airing_to_end": [],
-                "end_to_airing": [],
-                "failed": []
-            }
-            
         except Exception as e:
-            logger.error(f"发送通知失败：{str(e)}")
+            logger.error(f"发送通知时出错: {str(e)}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
+            # 错误通知也使用 post_message
+            self.post_message(
+                mtype=NotificationType.SiteMessage,
+                title="【番剧归档处理失败】",
+                text=f"处理过程出错：{str(e)}"
+            )
 
-    def check_status(self, tmdb_id: int, max_retries: int = 3) -> tuple:
+    def check_status(self, tmdb_id: int, path: str) -> Tuple[bool, str]:
         """
-        检查剧集状态，支持重试
+        检查媒体状态
         """
-        for retry in range(max_retries):
+        MAX_RETRIES = 3
+        RETRY_DELAY = 5
+        
+        for attempt in range(MAX_RETRIES):
             try:
-                mediainfo = self.mediachain.recognize_media(tmdbid=tmdb_id, mtype=MediaType.TV)
-                if mediainfo:
-                    return self.__parse_status(mediainfo)
-                if retry < max_retries - 1:
-                    logger.warning(f"第 {retry + 1} 次获取媒体信息失败，准备重试...")
-                    time.sleep(1)  # 重试前等待1秒
+                # 使用 mediachain 通过路径识别媒体信息
+                context = self.mediachain.recognize_by_path(path)
+                if not context or not context.media_info:
+                    if attempt < MAX_RETRIES - 1:
+                        logger.warning(f"第 {attempt + 1} 次获取媒体信息失败，{RETRY_DELAY}秒后重试...")
+                        time.sleep(RETRY_DELAY)
+                        continue
+                    else:
+                        logger.error(f"在 {MAX_RETRIES} 次尝试后仍无法获取媒体信息: {path}")
+                        return False, "unknown"
+                
+                media_info = context.media_info
+                
+                # 验证TMDB ID是否匹配
+                if media_info.tmdb_id != tmdb_id:
+                    logger.error(f"TMDB ID不匹配: 期望 {tmdb_id}, 实际 {media_info.tmdb_id}")
+                    return False, "unknown"
+                
+                # 获取关键信息
+                name = media_info.title
+                status = media_info.status
+                first_air_date = media_info.air_date
+                last_air_date = media_info.last_air_date
+                
+                if not status or not last_air_date:
+                    logger.error(f"媒体信息不完整: {path}")
+                    return False, "unknown"
+                    
+                # 计算距今天数
+                try:
+                    last_date = datetime.strptime(last_air_date, '%Y-%m-%d')
+                    today = datetime.now()
+                    days_diff = (today - last_date).days
+                    
+                    # 只输出一次日志
+                    logger.info(f"媒体信息: {name} ({first_air_date[:4] if first_air_date else '未知'})")
+                    logger.info(f"当前状态: {status}")
+                    logger.info(f"最后播出日期: {last_air_date}")
+                    logger.info(f"距今已过: {days_diff}天")
+                    logger.info(f"完结判定阈值: {self._end_after_days}天")
+                    
+                    if days_diff > self._end_after_days:
+                        logger.info(f"超过{self._end_after_days}天未更新，视为完结")
+                        return True, f"最后播出超过{self._end_after_days}天 ({last_air_date})"
+                    else:
+                        logger.info(f"未超过{self._end_after_days}天，视为连载中")
+                        return False, status
+                    
+                except ValueError as e:
+                    logger.error(f"日期解析错误: {str(e)}")
+                    return False, status
+                    
             except Exception as e:
-                if retry < max_retries - 1:
-                    logger.error(f"第 {retry + 1} 次获取媒体信息出错: {str(e)}，准备重试...")
-                    time.sleep(1)
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(f"第 {attempt + 1} 次请求失败: {str(e)}，{RETRY_DELAY}秒后重试...")
+                    time.sleep(RETRY_DELAY)
+                    continue
                 else:
-                    logger.error(f"最终获取媒体信息失败: {str(e)}")
-        return False, "无法识别媒体信息"
+                    logger.error(f"在 {MAX_RETRIES} 次尝试后仍然失败: {str(e)}")
+                    logger.error(f"错误详情: {traceback.format_exc()}")
+                    return False, "unknown"
 
-    def __parse_status(self, mediainfo: MediaInfo) -> tuple:
+    def __transfer_media(self, source: str, target: str, tmdb_id: int, old_status: str, new_status: str):
         """
-        解析媒体状态
-        """
-        # 打印基本信息
-        logger.info(f"媒体信息: {mediainfo.title} ({mediainfo.year})")
-        logger.info(f"当前状态: {mediainfo.status}")
-        
-        # 检查状态
-        status = mediainfo.status.lower() if mediainfo.status else ''
-        if status in self.END_STATUS:
-            logger.info(f"媒体已完结，完结状态: {status}")
-            return True, status
-        
-        # 检查最后播出日期
-        if mediainfo.last_air_date:
-            try:
-                last_date = datetime.strptime(mediainfo.last_air_date, '%Y-%m-%d')
-                days_diff = (datetime.now() - last_date).days
-                
-                # 计算具体时间
-                years = days_diff // 365
-                remaining_days = days_diff % 365
-                months = remaining_days // 30
-                days = remaining_days % 30
-                
-                time_desc = []
-                if years > 0:
-                    time_desc.append(f"{years}年")
-                if months > 0:
-                    time_desc.append(f"{months}个月")
-                if days > 0:
-                    time_desc.append(f"{days}天")
-                    
-                time_str = "".join(time_desc)
-                
-                logger.info(f"最后播出日期: {mediainfo.last_air_date}")
-                logger.info(f"距今已过: {time_str}")
-                logger.info(f"完结判定阈值: {self._end_after_days}天")
-                
-                # 使用配置的天数判断
-                if days_diff > self._end_after_days:
-                    logger.info(f"超过{self._end_after_days}天未更新，视为完结")
-                    return True, f"最后播出超过{self._end_after_days}天 ({mediainfo.last_air_date})"
-                else:
-                    logger.info(f"未超过{self._end_after_days}天，视为连载中")
-                    
-            except ValueError as e:
-                logger.error(f"日期解析错误: {str(e)}")
-        else:
-            logger.info("无最后播出日期信息")
-                
-        return False, status
-
-    def __save_history(self, source: str, target: str, media_name: str, 
-                      tmdb_id: int, old_status: str, new_status: str, 
-                      transfer_type: str):
-        """
-        保存历史记录
+        移动媒体文件并记录历史
         """
         try:
-            history = self.get_data('history') or {}
-            history[str(tmdb_id)] = {
-                'time': datetime.now(tz=pytz.timezone(settings.TZ)).strftime('%Y-%m-%d %H:%M:%S'),
-                'source': source,
-                'target': target,
-                'media_name': media_name,
-                'old_status': old_status,
-                'new_status': new_status,
-                'transfer_type': transfer_type
-            }
-            self.save_data('history', history)
-            logger.info(f"保存历史记录: {media_name}")
+            if self._test_mode:
+                logger.info(f"测试模式 - 需要移动: {source} -> {target}")
+            else:
+                # 移动文件
+                shutil.move(source, target)
+                logger.info(f"已移动: {source} -> {target}")
+                
+                # 保存转移历史
+                history = {
+                    "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "media_name": os.path.basename(source),
+                    "tmdb_id": tmdb_id,
+                    "source": source,
+                    "target": target,
+                    "old_status": old_status,
+                    "new_status": new_status,
+                    "transfer_type": "airing_to_end" if new_status in self.END_STATUS else "end_to_airing"
+                }
+                
+                # 获取现有历史记录
+                histories = self.get_data('transfer_history') or []
+                if not isinstance(histories, list):
+                    histories = [histories]
+                    
+                # 添加新记录
+                histories.append(history)
+                
+                # 保存更新后的历史记录
+                self.save_data('transfer_history', histories)
+                logger.info(f"已写入历史记录: {os.path.basename(source)} - {history['transfer_type']}")
+                
+                # 添加到通知消息
+                transfer_type = "airing_to_end" if new_status in self.END_STATUS else "end_to_airing"
+                self._transfer_messages[transfer_type].append(
+                    f"《{os.path.basename(source)}》: {self.__get_transfer_reason(old_status, new_status)}"
+                )
+                
         except Exception as e:
-            logger.error(f"保存历史记录失败: {str(e)}")
+            logger.error(f"移动媒体文件失败: {str(e)}")
+            # 记录失败历史
+            failed_history = {
+                "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "media_name": os.path.basename(source),
+                "error_msg": str(e)
+            }
+            
+            # 获取现有失败历史
+            failed_histories = self.get_data('failed_history') or []
+            if not isinstance(failed_histories, list):
+                failed_histories = [failed_histories]
+                
+            # 添加新的失败记录
+            failed_histories.append(failed_history)
+            
+            # 保存失败历史
+            self.save_data('failed_history', failed_histories)
+            logger.info(f"已写入失败记录: {os.path.basename(source)} - {str(e)}")
+            
+            # 添加到通知消息
+            self._transfer_messages["failed"].append(
+                f"《{os.path.basename(source)}》: 移动失败 - {str(e)}"
+            )
+
+    def __save_failed_history(self, media_name: str, media_path: str, error_msg: str):
+        """
+        保存失败历史记录
+        """
+        try:
+            history = {
+                "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "media_name": media_name,
+                "media_path": media_path,
+                "error_msg": error_msg
+            }
+            
+            # 获取现有历史记录
+            histories = self.get_data('failed_history') or []
+            if not isinstance(histories, list):
+                histories = [histories]
+                
+            # 添加新记录
+            histories.append(history)
+            
+            # 保存更新后的历史记录
+            self.save_data('failed_history', histories)
+            
+        except Exception as e:
+            logger.error(f"保存失败历史记录失败: {str(e)}")
 
     def __get_last_history(self, tmdb_id: int) -> Optional[dict]:
         """
@@ -432,46 +517,6 @@ class BangumiArchive(_PluginBase):
         except Exception as e:
             logger.error(f"获取历史记录失败: {str(e)}")
         return None
-
-    def __transfer_media(self, source: str, target: str, tmdb_id: int, 
-                        old_status: str, new_status: str):
-        """
-        转移媒体并记录
-        """
-        try:
-            media_name = os.path.basename(source)
-            if self._test_mode:
-                logger.info(f"测试模式 - 需要移动: {source} -> {target}")
-            else:
-                # 移动文件
-                shutil.move(source, target)
-                logger.info(f"已移动: {source} -> {target}")
-                
-            # 确定移动类型和原因
-            if new_status.lower() in [status.lower() for status in self.END_STATUS]:
-                # 连载->完结
-                transfer_type = "airing_to_end"
-                message = f"《{media_name}》: 状态变更为完结 ({new_status})"
-                self._transfer_messages["airing_to_end"].append(message)
-            else:
-                # 完结->连载
-                transfer_type = "end_to_airing"
-                message = f"《{media_name}》: 已恢复连载"
-                self._transfer_messages["end_to_airing"].append(message)
-            
-            # 保存历史
-            self.__save_history(
-                source=source,
-                target=target,
-                media_name=media_name,
-                tmdb_id=tmdb_id,
-                old_status=old_status,
-                new_status=new_status,
-                transfer_type=transfer_type
-            )
-                
-        except Exception as e:
-            logger.error(f"转移失败: {str(e)}")
 
     def __should_transfer(self, tmdb_id: int, new_status: str) -> bool:
         """
@@ -502,150 +547,164 @@ class BangumiArchive(_PluginBase):
         return False
 
     def __process_directory(self, source_dir: str, target_dir: str, check_ended: bool, processed_paths: set):
-        """
-        处理目录
-        """
+        """处理目录"""
         try:
             for item in os.listdir(source_dir):
                 item_path = os.path.normpath(os.path.join(source_dir, item))
                 
-                # 检查路径是否已处理
-                if processed_paths is not None and item_path in processed_paths:
-                    logger.debug(f"跳过已处理的路径: {item_path}")
+                # 跳过已处理的路径
+                if item_path in processed_paths:
                     continue
                     
                 if not os.path.isdir(item_path):
                     continue
-                
-                logger.debug(f"处理目录: {item_path}")
-                
-                # 获取TMDB ID
+
+                # 获取媒体信息
                 tmdb_id = self.__get_tmdb_id(item_path)
                 if not tmdb_id:
-                    logger.warning(f"无法获取TMDB ID: {item}")
-                    # 记录处理失败信息
-                    self._transfer_messages["failed"].append(
-                        f"《{item}》: 无法获取TMDB ID"
-                    )
+                    self._transfer_messages["failed"].append(f"《{item}》: 无法获取TMDB ID")
                     continue
-                    
-                # 检查状态
-                is_ended, status = self.check_status(tmdb_id)
-                
-                # 如果状态为 unknown 或包含"无法识别"，标记为失败
-                if status.lower() == "unknown" or "无法识别" in status:
-                    logger.warning(f"无法识别媒体状态: {item} (状态: {status})")
-                    # 记录处理失败信息
-                    self._transfer_messages["failed"].append(
-                        f"《{item}》: 无法识别媒体状态 ({status})"
-                    )
-                    # 记录已处理的路径
-                    if processed_paths is not None:
-                        processed_paths.add(item_path)
+
+                # 一次性获取所有媒体信息
+                media_info = self._get_media_info(tmdb_id)
+                if not media_info:
+                    self._transfer_messages["failed"].append(f"《{item}》: 无法识别媒体信息")
                     continue
-                    
-                if check_ended != is_ended:
-                    # 状态不符合要求
-                    logger.debug(f"保持不变的剧集: {item} (状态: {status})")
-                    # 记录已处理的路径
-                    if processed_paths is not None:
-                        processed_paths.add(item_path)
-                    continue
-                    
-                # 检查是否需要移动
-                if not self.__should_transfer(tmdb_id, status):
-                    logger.info(f"跳过最近已处理的媒体: {item}")
-                    # 记录已处理的路径
-                    if processed_paths is not None:
-                        processed_paths.add(item_path)
-                    continue
-                    
-                # 获取历史状态
-                last_history = self.__get_last_history(tmdb_id)
-                last_status = last_history.get("new_status") if last_history else None
+
+                # 检查是否需要处理
+                status = media_info.get("status")
+                last_air_date = media_info.get("last_air_date")
                 
-                # 移动目录
-                target_path = os.path.join(target_dir, item)
-                self.__transfer_media(
-                    source=item_path,
-                    target=target_path,
-                    tmdb_id=tmdb_id,
-                    old_status=last_status or "unknown",
-                    new_status=status
-                )
+                # 检查完结状态
+                is_ended = self.__check_if_ended(status, last_air_date)
                 
-                # 记录已处理的路径
-                if processed_paths is not None:
-                    processed_paths.add(item_path)
+                # 根据检查类型决定是否需要移动
+                if (check_ended and is_ended) or (not check_ended and not is_ended):
+                    if self.__need_transfer(tmdb_id, status):
+                        target_path = os.path.join(target_dir, item)
+                        self.__transfer_media(
+                            source=item_path,
+                            target=target_path,
+                            tmdb_id=tmdb_id,
+                            old_status=self.__get_last_status(tmdb_id),
+                            new_status=status
+                        )
                 
+                processed_paths.add(item_path)
+
         except Exception as e:
             logger.error(f"处理目录出错: {str(e)}")
 
-    def __get_tmdb_id(self, dir_path: str) -> int:
+    def __get_tmdb_id(self, path: str) -> Optional[int]:
         """
-        获取目录的TMDB ID
-        优先从NFO文件获取,其次从文件名解析
+        获取TMDB ID
         """
         try:
-            # 尝试从tvshow.nfo文件获取
-            nfo_path = os.path.join(dir_path, "tvshow.nfo")
+            # 1. 首先尝试从 nfo 文件获取
+            nfo_path = os.path.join(path, "tvshow.nfo")
             if os.path.exists(nfo_path):
-                tmdbid = self.__get_tmdbid_from_nfo(nfo_path)
-                if tmdbid:
-                    logger.debug(f"从tvshow.nfo获取到TMDB ID: {tmdbid}")
-                    return tmdbid
+                with open(nfo_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # 尝试匹配 uniqueid 标签
+                    match = re.search(r'<uniqueid type="tmdb">(\d+)</uniqueid>', content)
+                    if match:
+                        tmdb_id = int(match.group(1))
+                        logger.debug(f"从tvshow.nfo获取到TMDB ID: {tmdb_id}")
+                        return tmdb_id
+
+            # 2. 如果 nfo 文件不存在或无法获取ID，尝试从目录名称识别
+            media_name = os.path.basename(path)
+            # 移除年份
+            match = re.search(r"(.+?)(?:\s+\(\d{4}\))?$", media_name)
+            if match:
+                media_name = match.group(1).strip()
+                media_info = self.recognize_help(media_name)
+                if media_info:
+                    tmdb_id = media_info.tmdb_id
+                    if tmdb_id:
+                        logger.debug(f"从目录名称识别到TMDB ID: {tmdb_id}")
+                        return tmdb_id
             
-            # 查找目录下的其他nfo文件
-            for file in os.listdir(dir_path):
-                if file.endswith(".nfo"):
-                    nfo_path = os.path.join(dir_path, file)
-                    try:
-                        tmdbid = self.__get_tmdbid_from_nfo(nfo_path)
-                        if tmdbid:
-                            logger.debug(f"从{file}获取到TMDB ID: {tmdbid}")
-                            return tmdbid
-                    except Exception as e:
-                        logger.debug(f"读取NFO文件 {file} 失败: {str(e)}")
-                        continue
-            
-            # 从文件名解析
-            meta_info = self.meta_helper.get_media_info(
-                title=os.path.basename(dir_path),
-                mtype=MediaType.TV
-            )
-            if meta_info and meta_info.tmdb_id:
-                logger.debug(f"从文件名解析到TMDB ID: {meta_info.tmdb_id}")
-                return meta_info.tmdb_id
+            logger.warning(f"无法识别媒体: {media_name}")
+            return None
             
         except Exception as e:
-            logger.debug(f"获取TMDB ID失败: {str(e)}")
-        
+            logger.error(f"获取TMDB ID失败: {str(e)}")
+            return None
+
+    def _get_media_info(self, tmdb_id: int, path: str = None, retry_count: int = 3) -> Optional[Dict]:
+        """
+        获取媒体详细信息
+        @param tmdb_id: TMDB ID
+        @param path: 媒体路径
+        @param retry_count: 重试次数
+        @return: 媒体信息字典
+        """
+        for i in range(retry_count):
+            try:
+                media_info = None
+                
+                # 方案1: 如果提供了路径,优先使用路径识别
+                if path:
+                    context = self.mediachain.recognize_by_path(path)
+                    if context and context.media_info:
+                        media_info = context.media_info
+                
+                # 方案2: 如果路径识别失败或未提供路径,使用TMDB API
+                if not media_info:
+                    try:
+                        from app.modules.themoviedb.tmdbapi import TmdbApi
+                        tmdb_api = TmdbApi()
+                        media_info = tmdb_api.get_info(mtype=MediaType.TV, tmdbid=tmdb_id)
+                    except Exception as e:
+                        logger.error(f"TMDB API调用失败: {str(e)}")
+                        if i < retry_count - 1:
+                            continue
+                
+                if media_info:
+                    # 记录关键信息
+                    name = media_info.title if hasattr(media_info, 'title') else media_info.get('name')
+                    year = (media_info.air_date if hasattr(media_info, 'air_date') else media_info.get('first_air_date', ''))[:4]
+                    status = media_info.status if hasattr(media_info, 'status') else media_info.get('status')
+                    last_air_date = media_info.last_air_date if hasattr(media_info, 'last_air_date') else media_info.get('last_air_date')
+                    
+                    logger.info(f"媒体信息: {name} ({year})")
+                    logger.info(f"当前状态: {status}")
+                    
+                    return media_info
+                
+                if i < retry_count - 1:
+                    logger.warning(f"第 {i + 1} 次获取媒体信息失败，准备重试...")
+                    time.sleep(5)  # 添加重试延迟
+                    
+            except Exception as e:
+                logger.error(f"获取媒体信息出错: {str(e)}")
+                logger.error(f"错误详情: {traceback.format_exc()}")
+                if i < retry_count - 1:
+                    time.sleep(5)  # 添加重试延迟
+                    continue
+                    
         return None
 
-    @staticmethod
-    def __get_tmdbid_from_nfo(file_path: Path):
-        """
-        从nfo文件中获取信息
-        :param file_path:
-        :return: tmdbid
-        """
-        if not file_path:
-            return None
-        xpaths = [
-            "uniqueid[@type='Tmdb']",
-            "uniqueid[@type='tmdb']",
-            "uniqueid[@type='TMDB']",
-            "tmdbid"
-        ]
-        try:
-            reader = NfoReader(file_path)
-            for xpath in xpaths:
-                tmdbid = reader.get_element_value(xpath)
-                if tmdbid:
-                    return tmdbid
-        except Exception as err:
-            logger.warn(f"从nfo文件中获取tmdbid失败：{str(err)}")
-        return None
+    def __check_if_ended(self, status: str, last_air_date: str) -> bool:
+        """检查是否已完结"""
+        if status in self.END_STATUS:
+            return True
+            
+        if not last_air_date:
+            return False
+            
+        # 计算距今天数
+        days_passed = (datetime.now() - datetime.strptime(last_air_date, "%Y-%m-%d")).days
+        logger.info(f"距今已过: {days_passed}天")
+        logger.info(f"完结判定阈值: {self._end_after_days}天")
+        
+        if days_passed > self._end_after_days:
+            logger.info("超过判定天数，视为已完结")
+            return True
+            
+        logger.info("未超过判定天数，视为连载中")
+        return False
 
     def check_and_move(self):
         """
@@ -676,7 +735,7 @@ class BangumiArchive(_PluginBase):
                 if source and target:
                     path_list.append((source, target))
 
-            # 处理��个目录对
+            # 处理个目录对
             for source_dir, target_dir in path_list:
                 if not os.path.exists(source_dir) or not os.path.exists(target_dir):
                     logger.error(f"目录不存在: {source_dir} 或 {target_dir}")
@@ -710,7 +769,7 @@ class BangumiArchive(_PluginBase):
                 self.post_message(
                     mtype=NotificationType.SiteMessage,
                     title="【番剧归档处理失败】",
-                    text=f"错误信息：{str(e)}"
+                    text=f"检查过程出错：{str(e)}"
                 )
 
     def get_state(self) -> bool:
@@ -739,114 +798,336 @@ class BangumiArchive(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """
-        插件页面 - 显示历史记录
+        插件页面 - 显示归档处理历史记录
         """
-        histories = self.get_data('history')
-        if not histories:
-            return [{
-                'component': 'div',
-                'text': '暂无归档记录',
-                'props': {
-                    'class': 'text-center'
-                }
-            }]
+        # 获取历史数据
+        transfer_histories = self.get_data('transfer_history') or []
+        failed_histories = self.get_data('failed_history') or []
 
-        if not isinstance(histories, list):
-            histories = [histories]
-
-        # 按时间倒序排序
-        histories = sorted(histories, 
-                         key=lambda x: datetime.strptime(x.get("create_time"), "%Y-%m-%d %H:%M:%S"), 
-                         reverse=True)
-
-        contents = []
-        for history in histories:
-            contents.append({
-                'component': 'tr',
+        return [
+            # 统计信息卡片
+            {
+                'component': 'VRow',
                 'content': [
+                    # 总处理数量
                     {
-                        'component': 'td',
-                        'text': history.get("create_time")
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '总处理数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len(transfer_histories))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
                     },
+                    # 成功转移数量
                     {
-                        'component': 'td',
-                        'text': history.get("media_name")
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '成功转移数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len([h for h in transfer_histories if h.get("transfer_type") == "airing_to_end"]))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
                     },
+                    # 恢复连载数量
                     {
-                        'component': 'td',
-                        'text': "完结归档" if history.get("transfer_type") == "airing->end" else "恢复连载"
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '恢复连载数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len([h for h in transfer_histories if h.get("transfer_type") == "end_to_airing"]))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
                     },
+                    # 失败数量
                     {
-                        'component': 'td',
-                        'text': f'{history.get("old_status")} -> {history.get("new_status")}'
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '失败数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len(failed_histories))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
                     }
                 ]
-            })
-
-        return [{
-            'component': 'VRow',
-            'content': [{
-                'component': 'VCol',
-                'props': {
-                    'cols': 12
-                },
+            },
+            # 转移历史记录表格
+            {
+                'component': 'VRow',
                 'content': [{
-                    'component': 'VTable',
+                    'component': 'VCol',
                     'props': {
-                        'hover': True
+                        'cols': 12
                     },
-                    'content': [
-                        {
-                            'component': 'thead',
-                            'content': [{
-                                'component': 'tr',
-                                'content': [
-                                    {
-                                        'component': 'th',
-                                        'text': '时间',
-                                        'props': {
-                                            'class': 'text-start ps-4'
-                                        }
-                                    },
-                                    {
-                                        'component': 'th',
-                                        'text': '媒体名称',
-                                        'props': {
-                                            'class': 'text-start ps-4'
-                                        }
-                                    },
-                                    {
-                                        'component': 'th',
-                                        'text': '操作类型',
-                                        'props': {
-                                            'class': 'text-start ps-4'
-                                        }
-                                    },
-                                    {
-                                        'component': 'th',
-                                        'text': '状态变化',
-                                        'props': {
-                                            'class': 'text-start ps-4'
-                                        }
-                                    }
-                                ]
-                            }]
+                    'content': [{
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'tonal'
                         },
-                        {
-                            'component': 'tbody',
-                            'content': contents
-                        }
-                    ]
+                        'content': [
+                            {
+                                'component': 'VCardTitle',
+                                'content': '转移历史记录'
+                            },
+                            {
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'VTable',
+                                    'props': {
+                                        'hover': True
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'thead',
+                                            'content': [{
+                                                'component': 'tr',
+                                                'content': [
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '时间',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '媒体名称',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '操作类型',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '状态变化',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    }
+                                                ]
+                                            }]
+                                        },
+                                        {
+                                            'component': 'tbody',
+                                            'content': [
+                                                {
+                                                    'component': 'tr',
+                                                    'content': [
+                                                        {
+                                                            'component': 'td',
+                                                            'text': history.get('create_time', '未知')
+                                                        },
+                                                        {
+                                                            'component': 'td',
+                                                            'text': history.get('media_name', '未知')
+                                                        },
+                                                        {
+                                                            'component': 'td',
+                                                            'text': "完结归档" if history.get("transfer_type") == "airing_to_end" else "恢复连载"
+                                                        },
+                                                        {
+                                                            'component': 'td',
+                                                            'text': f"{history.get('old_status', '未知')} -> {history.get('new_status', '未知')}"
+                                                        }
+                                                    ]
+                                                } for history in sorted(transfer_histories,
+                                                                      key=lambda x: datetime.strptime(x.get('create_time', '1970-01-01 00:00:00'),
+                                                                                            '%Y-%m-%d %H:%M:%S'),
+                                                                      reverse=True)
+                                            ]
+                                        }
+                                    ]
+                                }]
+                            }
+                        ]
+                    }]
                 }]
-            }]
-        }]
+            },
+            # 失败记录表格
+            {
+                'component': 'VRow',
+                'content': [{
+                    'component': 'VCol',
+                    'props': {
+                        'cols': 12
+                    },
+                    'content': [{
+                        'component': 'VCard',
+                        'content': [
+                            {
+                                'component': 'VCardTitle',
+                                'content': '失败记录'
+                            },
+                            {
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'VTable',
+                                    'props': {
+                                        'hover': True
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'thead',
+                                            'content': [{
+                                                'component': 'tr',
+                                                'content': [
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '时间',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '媒体名称',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '错误信息',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    }
+                                                ]
+                                            }]
+                                        },
+                                        {
+                                            'component': 'tbody',
+                                            'content': [
+                                                {
+                                                    'component': 'tr',
+                                                    'content': [
+                                                        {
+                                                            'component': 'td',
+                                                            'text': history.get('create_time', '未知')
+                                                        },
+                                                        {
+                                                            'component': 'td',
+                                                            'text': history.get('media_name', '未知')
+                                                        },
+                                                        {
+                                                            'component': 'td',
+                                                            'text': history.get('error_msg', '未知错误')
+                                                        }
+                                                    ]
+                                                } for history in sorted(failed_histories,
+                                                                      key=lambda x: datetime.strptime(x.get('create_time', '1970-01-01 00:00:00'),
+                                                                                            '%Y-%m-%d %H:%M:%S'),
+                                                                      reverse=True)
+                                            ]
+                                        }
+                                    ]
+                                }]
+                            }
+                        ]
+                    }]
+                }]
+            }
+        ]
 
     def get_api(self) -> List[Dict[str, Any]]:
         """
         返回API接口配置
         """
         return []
-
     def __get_transfer_reason(self, old_status: str, new_status: str) -> str:
         """
         获取转移原因描述
@@ -857,6 +1138,51 @@ class BangumiArchive(_PluginBase):
             return "已恢复连载"
         else:
             return f"状态从 {old_status} 变更为 {new_status}"
+
+    def process_directory(self, dir_path: str):
+        """处理单个目录"""
+        # 获取TMDB ID
+        tmdb_id = self._get_tmdb_id(dir_path)
+        if not tmdb_id:
+            return
+            
+        # 一次性获取所有需要的信息
+        media_info = self._get_media_info(tmdb_id)
+        if not media_info:
+            logger.debug(f"保持不变的剧集: {os.path.basename(dir_path)} (状态: 无法识别媒体信息)")
+            return
+            
+        # 使用获取到的信息进行处理
+        status = media_info.get("status")
+        last_air_date = media_info.get("last_air_date")
+        
+        # 后续的状态判断和处理逻辑...
+
+    def __verify_history_format(self):
+        """
+        验证历史记录格式
+        """
+        try:
+            # 验证转移历史
+            transfer_histories = self.get_data('transfer_history') or []
+            if transfer_histories:
+                for history in transfer_histories:
+                    required_fields = ['create_time', 'media_name', 'transfer_type', 'old_status', 'new_status']
+                    missing_fields = [field for field in required_fields if field not in history]
+                    if missing_fields:
+                        logger.warning(f"转移历史记录缺少字段: {missing_fields}")
+                    
+            # 验证失败历史
+            failed_histories = self.get_data('failed_history') or []
+            if failed_histories:
+                for history in failed_histories:
+                    required_fields = ['create_time', 'media_name', 'error_msg']
+                    missing_fields = [field for field in required_fields if field not in history]
+                    if missing_fields:
+                        logger.warning(f"失败历史记录缺少字段: {missing_fields}")
+                    
+        except Exception as e:
+            logger.error(f"验证历史记录格式失败: {str(e)}")
 
 class TransferHistory:
     def __init__(self):
