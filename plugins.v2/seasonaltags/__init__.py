@@ -30,7 +30,7 @@ class SeasonalTags(_PluginBase):
     plugin_desc = "自动为Emby的动漫库添加季度标签（例：2024年10月番）"
 
     plugin_version = "1.2"
-    plugin_author = "Sebas0619"
+    plugin_author = "Sebastian0619"
     plugin_config_prefix = "seasonaltags_"
     plugin_icon = "emby.png"
     plugin_order = 21

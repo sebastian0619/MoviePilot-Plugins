@@ -27,8 +27,8 @@ class BangumiArchive(_PluginBase):
     # 插件基础信息
     plugin_name = "连载番剧归档"
     plugin_desc = "自动检测连载目录中的番剧，识别完结情况并归档到完结目录"
-    plugin_version = "1.1"
-    plugin_author = "Sebas0619"
+    plugin_version = "1.2"
+    plugin_author = "Sebastian0619"
     author_url = "https://github.com/sebastian0619"
     plugin_config_prefix = "bangumiarchive_"
     plugin_order = 21
@@ -42,6 +42,7 @@ class BangumiArchive(_PluginBase):
     _test_mode = False
     _notify = False
     _bidirectional = False
+    _end_after_days = 730  # 默认730天(2年)
 
     # 完结状态列表
     END_STATUS = [
@@ -72,6 +73,8 @@ class BangumiArchive(_PluginBase):
                 self._test_mode = config.get("test_mode")
                 self._notify = config.get("notify")
                 self._bidirectional = config.get("bidirectional")
+                # 添加新配置项，如果未配置则使用默认值
+                self._end_after_days = int(config.get("end_after_days", 730))
                 
                 # 如果开启立即运行
                 if self._enabled and self._onlyonce:
@@ -190,6 +193,23 @@ class BangumiArchive(_PluginBase):
                         ]
                     },
                     {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 4
+                        },
+                        'content': [
+                            {
+                                'component': 'VTextField',
+                                'props': {
+                                    'model': 'days_to_complete',
+                                    'label': '视为完结天数',
+                                    'placeholder': '输入天数，例如：730'
+                                }
+                            }
+                        ]
+                    },
+                    {
                         'component': 'VRow',
                         'content': [
                             {
@@ -241,7 +261,8 @@ class BangumiArchive(_PluginBase):
             'notify': False,
             'bidirectional': False,
             'cron': '5 1 * * *',
-            'paths': ''
+            'paths': '',
+            'end_after_days': 730
         }
 
     def __send_notification(self, title: str, text: str):
@@ -312,19 +333,20 @@ class BangumiArchive(_PluginBase):
                 
                 logger.info(f"最后播出日期: {mediainfo.last_air_date}")
                 logger.info(f"距今已过: {time_str}")
+                logger.info(f"完结判定阈值: {self._end_after_days}天")
                 
-                # 如果超过2年没有更新，视为完结
-                if days_diff > 730:  # 2年 = 730天
-                    logger.info(f"超过2年未更新，视为完结")
-                    return True, f"最后播出超过2年 ({mediainfo.last_air_date})"
+                # 使用配置的天数判断
+                if days_diff > self._end_after_days:
+                    logger.info(f"超过{self._end_after_days}天未更新，视为完结")
+                    return True, f"最后播出超过{self._end_after_days}天 ({mediainfo.last_air_date})"
                 else:
-                    logger.info(f"未超过2年，视为连载中")
+                    logger.info(f"未超过{self._end_after_days}天，视为连载中")
                     
             except ValueError as e:
                 logger.error(f"日期解析错误: {str(e)}")
         else:
             logger.info("无最后播出日期信息")
-            
+                
         return False, status
 
     def __save_history(self, source: str, target: str, title: str, tmdb_id: int, status: str):
@@ -512,7 +534,8 @@ class BangumiArchive(_PluginBase):
             "notify": self._notify,
             "bidirectional": self._bidirectional,
             "cron": self._cron,
-            "paths": self._paths
+            "paths": self._paths,
+            "end_after_days": self._end_after_days  # 添加新配置项
         })
 
     def get_page(self) -> List[dict]:
