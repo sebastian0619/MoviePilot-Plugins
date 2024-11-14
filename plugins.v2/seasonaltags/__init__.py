@@ -646,36 +646,284 @@ class SeasonalTags(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """
-        插件页面配置
+        插件页面 - 显示标签处理历史记录
         """
-        return [
-            {
+        histories = self.get_data('history')
+        if not histories:
+            return [{
                 'component': 'div',
+                'text': '暂无标签处理记录',
                 'props': {
-                    'class': 'pa-0'
-                },
+                    'class': 'text-center'
+                }
+            }]
+
+        # 将字典转换为列表并按时间倒序排序
+        histories_list = []
+        for item_id, history in histories.items():
+            history['item_id'] = item_id
+            histories_list.append(history)
+        
+        histories_list = sorted(histories_list,
+                              key=lambda x: datetime.strptime(x.get("time"), "%Y-%m-%d %H:%M:%S"),
+                              reverse=True)
+
+        contents = []
+        for history in histories_list:
+            # 根据状态设置不同的颜色
+            status_color = {
+                'success': 'success',
+                'failed': 'error',
+                'skipped': 'warning'
+            }.get(history.get("status"), '')
+
+            contents.append({
+                'component': 'tr',
                 'content': [
                     {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'api',
-                                        'props': {
-                                            'url': '/seasonaltags/libraries?server={mediaserver}',
-                                            'method': 'GET'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
+                        'component': 'td',
+                        'text': history.get("time")
+                    },
+                    {
+                        'component': 'td',
+                        'text': history.get("title")
+                    },
+                    {
+                        'component': 'td',
+                        'text': history.get("old_tag") or "无"
+                    },
+                    {
+                        'component': 'td',
+                        'text': history.get("new_tag") or "无"
+                    },
+                    {
+                        'component': 'td',
+                        'content': [{
+                            'component': 'VChip',
+                            'props': {
+                                'color': status_color,
+                                'size': 'small'
+                            },
+                            'text': history.get("status", "未知")
+                        }]
                     }
                 ]
+            })
+
+        return [
+            # 统计信息卡片
+            {
+                'component': 'VRow',
+                'content': [
+                    # 总处理数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '总处理数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len(histories_list))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
+                    },
+                    # 成功数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '成功数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len([h for h in histories_list if h.get("status") == "success"]))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
+                    },
+                    # 失败数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '失败数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len([h for h in histories_list if h.get("status") == "failed"]))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
+                    },
+                    # 跳过数量
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [{
+                            'component': 'VCard',
+                            'props': {
+                                'variant': 'tonal'
+                            },
+                            'content': [{
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'div',
+                                    'content': [
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-subtitle-2'},
+                                            'text': '跳过数量'
+                                        },
+                                        {
+                                            'component': 'div',
+                                            'props': {'class': 'text-h6'},
+                                            'text': str(len([h for h in histories_list if h.get("status") == "skipped"]))
+                                        }
+                                    ]
+                                }]
+                            }]
+                        }]
+                    }
+                ]
+            },
+            # 历史记录表格
+            {
+                'component': 'VRow',
+                'content': [{
+                    'component': 'VCol',
+                    'props': {
+                        'cols': 12
+                    },
+                    'content': [{
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'tonal'
+                        },
+                        'content': [
+                            {
+                                'component': 'VCardTitle',
+                                'content': '标签处理历史'
+                            },
+                            {
+                                'component': 'VCardText',
+                                'content': [{
+                                    'component': 'VTable',
+                                    'props': {
+                                        'hover': True
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'thead',
+                                            'content': [{
+                                                'component': 'tr',
+                                                'content': [
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '时间',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '媒体标题',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '原标签',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '新标签',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '状态',
+                                                        'props': {
+                                                            'class': 'text-start ps-4'
+                                                        }
+                                                    }
+                                                ]
+                                            }]
+                                        },
+                                        {
+                                            'component': 'tbody',
+                                            'content': contents
+                                        }
+                                    ]
+                                }]
+                            }
+                        ]
+                    }]
+                }]
             }
         ]
 
