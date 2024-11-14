@@ -5,6 +5,7 @@ BangumiArchive插件
 from typing import Any, Dict, List, Tuple
 from app.core.config import settings
 from app.core.event import eventmanager, Event, EventType
+from app.core.context import Context, MediaInfo
 from app.plugins import _PluginBase
 from app.schemas.types import MediaType
 from app.log import logger
@@ -20,6 +21,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 from datetime import timedelta
+import time
 
 class BangumiArchive(_PluginBase):
     # 插件基础信息
@@ -251,40 +253,47 @@ class BangumiArchive(_PluginBase):
                 text=text
             )
 
-    def check_status(self, tmdb_id: int) -> tuple:
+    def check_status(self, tmdb_id: int, max_retries: int = 3) -> tuple:
         """
-        检查剧集状态
-        返回 (是否完结, 状态描述)
+        检查剧集状态，支持重试
         """
-        if not tmdb_id:
-            return False, "无TMDB ID"
+        for retry in range(max_retries):
+            try:
+                mediainfo = self.mediachain.recognize_media(tmdbid=tmdb_id, mtype=MediaType.TV)
+                if mediainfo:
+                    return self.__parse_status(mediainfo)
+                if retry < max_retries - 1:
+                    logger.warning(f"第 {retry + 1} 次获取媒体信息失败，准备重试...")
+                    time.sleep(1)  # 重试前等待1秒
+            except Exception as e:
+                if retry < max_retries - 1:
+                    logger.error(f"第 {retry + 1} 次获取媒体信息出错: {str(e)}，准备重试...")
+                    time.sleep(1)
+                else:
+                    logger.error(f"最终获取媒体信息失败: {str(e)}")
+        return False, "无法识别媒体信息"
+
+    def __parse_status(self, mediainfo: MediaInfo) -> tuple:
+        """
+        解析媒体状态
+        """
+        # 检查状态
+        status = mediainfo.status.lower() if mediainfo.status else ''
+        if status in self.END_STATUS:
+            return True, status
         
-        try:
-            # 使用 MediaChain 获取剧集详情
-            mediainfo = self.mediachain.recognize_media(tmdbid=tmdb_id, mtype=MediaType.TV)
-            if not mediainfo:
-                return False, "无法识别媒体信息"
+        # 检查最后播出日期
+        if mediainfo.last_air_date:
+            try:
+                last_date = datetime.strptime(mediainfo.last_air_date, '%Y-%m-%d')
+                days_diff = (datetime.now() - last_date).days
+                # 如果超过2年没有更新，视为完结
+                if days_diff > 730:  # 2年 = 730天
+                    return True, f"最后播出超过2年 ({mediainfo.last_air_date})"
+            except ValueError as e:
+                logger.error(f"日期解析错误: {str(e)}")
             
-            # 检查完结状态
-            status = mediainfo.status.lower() if mediainfo.status else ''
-            if status in self.END_STATUS:
-                return True, status
-            
-            # 检查最后播出日期
-            if mediainfo.last_air_date:
-                try:
-                    last_date = datetime.strptime(mediainfo.last_air_date, '%Y-%m-%d')
-                    days_diff = (datetime.now() - last_date).days
-                    if days_diff > 365:
-                        return True, f"最后播出超过一年 ({mediainfo.last_air_date})"
-                except ValueError as e:
-                    logger.error(f"日期解析错误: {str(e)}")
-            
-            return False, status
-            
-        except Exception as e:
-            logger.error(f"获取媒体信息出错: {str(e)}")
-            return False, f"错误: {str(e)}"
+        return False, status
 
     def __save_history(self, source: str, target: str, title: str, tmdb_id: int, status: str):
         """
