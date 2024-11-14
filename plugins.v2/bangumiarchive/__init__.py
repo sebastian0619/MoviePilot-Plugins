@@ -19,7 +19,7 @@ from app.chain.tmdb import TmdbChain
 class BangumiArchive(_PluginBase):
     # 插件基础信息
     plugin_name = "番剧归档"
-    plugin_desc = "自动检测并归档完结/连载的番剧"
+    plugin_desc = "自动检测并归档完结/连载的番剧（暂不可用）"
     plugin_version = "1.0"
     plugin_author = "Sebas0619"
     plugin_config_prefix = "bangumiarchive_"
