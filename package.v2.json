@@ -1,9 +1,9 @@
 {
   "BangumiArchive": {
-    "name": "番剧归档",
-    "description": "自动检测完结/连载的番剧并归档到指定目录",
+    "name": "连载番剧归档",
+    "description": "自动检测连载目录中的番剧，识别完结情况并归档到完结目录",
     "labels": "媒体库",
-    "version": "1.0",
+    "version": "1.1",
     "icon": "emby-icon.png",
     "author": "Sebas0619",
     "level": 2,

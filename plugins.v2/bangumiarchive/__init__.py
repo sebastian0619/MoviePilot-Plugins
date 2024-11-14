@@ -25,10 +25,11 @@ import time
 
 class BangumiArchive(_PluginBase):
     # 插件基础信息
-    plugin_name = "番剧归档"
-    plugin_desc = "自动检测并归档完结/连载的番剧（暂不可用）"
-    plugin_version = "1.0"
+    plugin_name = "连载番剧归档"
+    plugin_desc = "自动检测连载目录中的番剧，识别完结情况并归档到完结目录"
+    plugin_version = "1.1"
     plugin_author = "Sebas0619"
+    author_url = "https://github.com/sebastian0619"
     plugin_config_prefix = "bangumiarchive_"
     plugin_order = 21
     auth_level = 1
@@ -277,9 +278,14 @@ class BangumiArchive(_PluginBase):
         """
         解析媒体状态
         """
+        # 打印基本信息
+        logger.info(f"媒体信息: {mediainfo.title} ({mediainfo.year})")
+        logger.info(f"当前状态: {mediainfo.status}")
+        
         # 检查状态
         status = mediainfo.status.lower() if mediainfo.status else ''
         if status in self.END_STATUS:
+            logger.info(f"媒体已完结，完结状态: {status}")
             return True, status
         
         # 检查最后播出日期
@@ -287,11 +293,37 @@ class BangumiArchive(_PluginBase):
             try:
                 last_date = datetime.strptime(mediainfo.last_air_date, '%Y-%m-%d')
                 days_diff = (datetime.now() - last_date).days
+                
+                # 计算具体时间
+                years = days_diff // 365
+                remaining_days = days_diff % 365
+                months = remaining_days // 30
+                days = remaining_days % 30
+                
+                time_desc = []
+                if years > 0:
+                    time_desc.append(f"{years}年")
+                if months > 0:
+                    time_desc.append(f"{months}个月")
+                if days > 0:
+                    time_desc.append(f"{days}天")
+                    
+                time_str = "".join(time_desc)
+                
+                logger.info(f"最后播出日期: {mediainfo.last_air_date}")
+                logger.info(f"距今已过: {time_str}")
+                
                 # 如果超过2年没有更新，视为完结
                 if days_diff > 730:  # 2年 = 730天
+                    logger.info(f"超过2年未更新，视为完结")
                     return True, f"最后播出超过2年 ({mediainfo.last_air_date})"
+                else:
+                    logger.info(f"未超过2年，视为连载中")
+                    
             except ValueError as e:
                 logger.error(f"日期解析错误: {str(e)}")
+        else:
+            logger.info("无最后播出日期信息")
             
         return False, status
 
