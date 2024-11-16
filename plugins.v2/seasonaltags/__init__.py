@@ -29,7 +29,7 @@ class SeasonalTags(_PluginBase):
     plugin_name = "Emby季度番剧标签"
     plugin_desc = "自动为Emby的动漫库添加季度标签（例：2024年10月番）"
 
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     plugin_author = "Sebastian0619"
     plugin_config_prefix = "seasonaltags_"
     plugin_icon = "emby.png"
@@ -291,7 +291,7 @@ class SeasonalTags(_PluginBase):
                                         'props': {
                                             'model': 'target_libraries',
                                             'label': '目标媒体库',
-                                            'placeholder': '每行输入一个媒体库名称',
+                                            'placeholder': '多个媒体库名称请用英文逗号分隔',
                                             'rows': 2,
                                         }
                                     }
