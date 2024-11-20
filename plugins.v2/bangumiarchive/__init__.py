@@ -619,9 +619,19 @@ class BangumiArchive(_PluginBase):
             match = re.search(r"(.+?)(?:\s+\(\d{4}\))?$", media_name)
             if match:
                 media_name = match.group(1).strip()
-                # 创建 MetaBase 对象，正确传入 title 参数
+                year = None
+                
+                # 尝试提取年份
+                year_match = re.search(r"\((\d{4})\)", os.path.basename(path))
+                if year_match:
+                    year = year_match.group(1)
+                
+                # 创建 MetaBase 对象，设置完整的元数据
                 meta = MetaBase(title=media_name)
                 meta.type = MediaType.TV
+                meta.name = media_name  # 设置 name 属性
+                if year:
+                    meta.year = year
                 
                 # 使用 mediachain 的 recognize_by_meta 方法
                 media_info = self.mediachain.recognize_by_meta(meta)
@@ -630,7 +640,17 @@ class BangumiArchive(_PluginBase):
                     if tmdb_id:
                         logger.debug(f"从目录名称识别到TMDB ID: {tmdb_id}")
                         return tmdb_id
-            
+                
+                # 如果第一次识别失败，尝试使用 mediachain 的 recognize_by_path 方法
+                if not media_info:
+                    logger.info(f"尝试使用路径识别: {path}")
+                    context = self.mediachain.recognize_by_path(path)
+                    if context and context.media_info:
+                        tmdb_id = context.media_info.tmdb_id
+                        if tmdb_id:
+                            logger.debug(f"从路径识别到TMDB ID: {tmdb_id}")
+                            return tmdb_id
+                
             logger.warning(f"无法识别媒体: {media_name}")
             return None
             
@@ -1172,7 +1192,7 @@ class BangumiArchive(_PluginBase):
             logger.debug(f"保持不变的剧集: {os.path.basename(dir_path)} (状态: 无法识别媒体信息)")
             return
             
-        # 使用获取到��信息进行处理
+        # 使用获取到的信息进行处理
         status = media_info.get("status")
         last_air_date = media_info.get("last_air_date")
         
