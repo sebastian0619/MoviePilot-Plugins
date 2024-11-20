@@ -427,7 +427,7 @@ class BangumiArchive(_PluginBase):
                     "target": target,
                     "old_status": old_status,
                     "new_status": new_status,
-                    "transfer_type": "airing_to_end" if new_status in self.END_STATUS else "end_to_airing"
+                    "transfer_type": "airing_to_end" if old_status == "Returning Series" else "end_to_airing"
                 }
                 
                 # 获取现有历史记录
@@ -443,7 +443,7 @@ class BangumiArchive(_PluginBase):
                 logger.info(f"已写入历史记录: {os.path.basename(source)} - {history['transfer_type']}")
                 
                 # 添加到通知消息
-                transfer_type = "airing_to_end" if new_status in self.END_STATUS else "end_to_airing"
+                transfer_type = history['transfer_type']
                 self._transfer_messages[transfer_type].append(
                     f"《{os.path.basename(source)}》: {self.__get_transfer_reason(old_status, new_status)}"
                 )
@@ -1172,7 +1172,7 @@ class BangumiArchive(_PluginBase):
             logger.debug(f"保持不变的剧集: {os.path.basename(dir_path)} (状态: 无法识别媒体信息)")
             return
             
-        # 使用获取到的信息进行处理
+        # 使用获取到��信息进行处理
         status = media_info.get("status")
         last_air_date = media_info.get("last_air_date")
         
