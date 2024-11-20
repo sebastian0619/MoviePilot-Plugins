@@ -4,6 +4,7 @@ BangumiArchive插件
 """
 from typing import Any, Dict, List, Tuple, Optional
 from app.core.config import settings
+from app.core.meta import MetaBase
 from app.core.event import eventmanager, Event, EventType
 from app.core.context import Context, MediaInfo
 from app.plugins import _PluginBase
@@ -618,7 +619,12 @@ class BangumiArchive(_PluginBase):
             match = re.search(r"(.+?)(?:\s+\(\d{4}\))?$", media_name)
             if match:
                 media_name = match.group(1).strip()
-                media_info = self.recognize_help(media_name)
+                # 创建 MetaBase 对象，正确传入 title 参数
+                meta = MetaBase(title=media_name)
+                meta.type = MediaType.TV
+                
+                # 使用 mediachain 的 recognize_by_meta 方法
+                media_info = self.mediachain.recognize_by_meta(meta)
                 if media_info:
                     tmdb_id = media_info.tmdb_id
                     if tmdb_id:
@@ -631,6 +637,20 @@ class BangumiArchive(_PluginBase):
         except Exception as e:
             logger.error(f"获取TMDB ID失败: {str(e)}")
             return None
+
+    def __get_last_status(self, tmdb_id: int) -> str:
+        """
+        获取最近一次的状态
+        """
+        try:
+            # 获取最近的移动记录
+            last_history = self.__get_last_history(tmdb_id)
+            if last_history:
+                return last_history.get("new_status", "unknown")
+            return "unknown"
+        except Exception as e:
+            logger.error(f"获取最近状态失败: {str(e)}")
+            return "unknown"
 
     def _get_media_info(self, tmdb_id: int, path: str = None, retry_count: int = 3) -> Optional[Dict]:
         """
@@ -1183,6 +1203,34 @@ class BangumiArchive(_PluginBase):
                     
         except Exception as e:
             logger.error(f"验证历史记录格式失败: {str(e)}")
+
+    def __need_transfer(self, tmdb_id: int, new_status: str) -> bool:
+        """
+        判断是否需要转移
+        """
+        # 获取最近的移动记录
+        last_history = self.__get_last_history(tmdb_id)
+        
+        # 获取上次检查时间
+        last_check = self._last_check_time.get(tmdb_id)
+        now = datetime.now()
+        
+        # 如果最近24小时内检查过，跳过
+        if last_check and (now - last_check).total_seconds() < 24 * 3600:
+            return False
+        
+        # 更新检查时间
+        self._last_check_time[tmdb_id] = now
+        
+        # 如果没有历史记录，需要移动
+        if not last_history:
+            return True
+        
+        # 如果状态发生变化，需要移动
+        if last_history.get("new_status", "").lower() != new_status.lower():
+            return True
+        
+        return False
 
 class TransferHistory:
     def __init__(self):
