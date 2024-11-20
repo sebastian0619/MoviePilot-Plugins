@@ -31,7 +31,7 @@ class BangumiArchive(_PluginBase):
     # 插件基础信息
     plugin_name = "连载番剧归档"
     plugin_desc = "自动检测连载目录中的番剧，识别完结情况并归档到完结目录"
-    plugin_version = "1.3"
+    plugin_version = "1.5"
     plugin_icon = "emby.png"
     plugin_author = "Sebastian0619"
     author_url = "https://github.com/sebastian0619"
