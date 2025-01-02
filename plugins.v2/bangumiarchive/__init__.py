@@ -52,6 +52,14 @@ class BangumiArchive(_PluginBase):
     # 状态常量定义
     END_STATUS = {"Ended", "Canceled"}
     
+    # 状态映射
+    STATUS_MAPPING = {
+        "unknown": "未知",
+        "Ended": "已完结",
+        "Canceled": "已取消",
+        "Returning Series": "连载中"
+    }
+    
     # 在类中初始化
     meta_helper = None
     mediachain = None
@@ -1059,11 +1067,11 @@ class BangumiArchive(_PluginBase):
                                                             'component': 'td',
                                                             'text': (lambda old, new: "完结归档" if (old == "Returning Series" and new == "Ended") or (old == "unknown" and new == "Ended")
                                                                    else "恢复连载" if (old == "Ended" and new == "Returning Series") or (old == "unknown" and new == "Returning Series")
-                                                                   else f"状态变更 ({old} -> {new})")(history.get('old_status', 'unknown'), history.get('new_status', 'unknown'))
+                                                                   else f"状态变更 ({self.STATUS_MAPPING.get(old, old)} -> {self.STATUS_MAPPING.get(new, new)})")(history.get('old_status', 'unknown'), history.get('new_status', 'unknown'))
                                                         },
                                                         {
                                                             'component': 'td',
-                                                            'text': f"{history.get('old_status', '未知')} -> {history.get('new_status', '未知')}"
+                                                            'text': f"{self.STATUS_MAPPING.get(history.get('old_status', 'unknown'), '未知')} -> {self.STATUS_MAPPING.get(history.get('new_status', 'unknown'), '未知')}"
                                                         }
                                                     ]
                                                 } for history in sorted(transfer_histories,
