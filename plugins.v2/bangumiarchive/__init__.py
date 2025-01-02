@@ -1057,7 +1057,9 @@ class BangumiArchive(_PluginBase):
                                                         },
                                                         {
                                                             'component': 'td',
-                                                            'text': "完结归档" if history.get("transfer_type") == "airing_to_end" else "恢复连载"
+                                                            'text': (lambda old, new: "完结归档" if (old == "Returning Series" and new == "Ended") or (old == "unknown" and new == "Ended")
+                                                                   else "恢复连载" if (old == "Ended" and new == "Returning Series") or (old == "unknown" and new == "Returning Series")
+                                                                   else f"状态变更 ({old} -> {new})")(history.get('old_status', 'unknown'), history.get('new_status', 'unknown'))
                                                         },
                                                         {
                                                             'component': 'td',
