@@ -31,7 +31,7 @@ class BangumiArchive(_PluginBase):
     # 插件基础信息
     plugin_name = "连载番剧归档"
     plugin_desc = "自动检测连载目录中的番剧，识别完结情况并归档到完结目录"
-    plugin_version = "1.6"
+    plugin_version = "1.7"
     plugin_icon = "emby.png"
     plugin_author = "Sebastian0619"
     author_url = "https://github.com/sebastian0619"
@@ -452,8 +452,13 @@ class BangumiArchive(_PluginBase):
                 
                 # 添加到通知消息
                 transfer_type = history['transfer_type']
+                operation_type = (
+                    "完结归档" if (old_status == "Returning Series" and new_status == "Ended") or (old_status == "unknown" and new_status == "Ended")
+                    else "恢复连载" if (old_status == "Ended" and new_status == "Returning Series") or (old_status == "unknown" and new_status == "Returning Series")
+                    else f"状态变更 ({self.STATUS_MAPPING.get(old_status, old_status)} -> {self.STATUS_MAPPING.get(new_status, new_status)})"
+                )
                 self._transfer_messages[transfer_type].append(
-                    f"《{os.path.basename(source)}》: {self.__get_transfer_reason(old_status, new_status)}"
+                    f"《{os.path.basename(source)}》: {operation_type}"
                 )
                 
         except Exception as e:
