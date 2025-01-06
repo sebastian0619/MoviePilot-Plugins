@@ -25,7 +25,7 @@ class MediaArchive(_PluginBase):
     # 插件基础信息
     plugin_name = "媒体文件归档"
     plugin_desc = "自动归档媒体文件到指定目录"
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     plugin_author = "Sebastian0619"
     plugin_icon = "emby.png"
     author_url = "https://github.com/sebastian0619"
@@ -122,159 +122,155 @@ class MediaArchive(_PluginBase):
         """配置表单"""
         return [
             {
-                "component": "VForm",
-                "content": [
+                'component': 'VRow',
+                'content': [
                     {
-                        'component': 'VRow',
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
                         'content': [
                             {
-                                'component': 'VCol',
+                                'component': 'VSwitch',
                                 'props': {
-                                    'cols': 12,
-                                    'md': 4
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'enabled',
-                                            'label': '启用插件'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 4
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'onlyonce',
-                                            'label': '立即运行一次'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 4
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'test_mode',
-                                            'label': '测试模式'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 4
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'notify',
-                                            'label': '发送通知'
-                                        }
-                                    }
-                                ]
+                                    'model': 'enabled',
+                                    'label': '启用插件'
+                                }
                             }
                         ]
                     },
                     {
-                        'component': 'VRow',
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
                         'content': [
                             {
-                                'component': 'VCol',
+                                'component': 'VSwitch',
                                 'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
-                                            'model': 'source_dir',
-                                            'label': '源目录',
-                                            'placeholder': '输入源目录路径'
-                                        }
-                                    }
-                                ]
+                                    'model': 'onlyonce',
+                                    'label': '立即运行一次'
+                                }
                             }
                         ]
                     },
                     {
-                        'component': 'VRow',
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
                         'content': [
                             {
-                                'component': 'VCol',
+                                'component': 'VSwitch',
                                 'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
-                                            'model': 'target_dir',
-                                            'label': '目标目录',
-                                            'placeholder': '输入目标目录路径'
-                                        }
-                                    }
-                                ]
+                                    'model': 'test_mode',
+                                    'label': '测试模式'
+                                }
                             }
                         ]
                     },
                     {
-                        'component': 'VRow',
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
                         'content': [
                             {
-                                'component': 'VCol',
+                                'component': 'VSwitch',
                                 'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
-                                            'model': 'cron',
-                                            'label': '执行周期',
-                                            'placeholder': '5位cron表达式，默认：5 1 * * *'
-                                        }
-                                    }
-                                ]
+                                    'model': 'notify',
+                                    'label': '发送通知'
+                                }
                             }
                         ]
-                    },
+                    }
+                ]
+            },
+            {
+                'component': 'VRow',
+                'content': [
                     {
-                        'component': 'VRow',
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12
+                        },
                         'content': [
                             {
-                                'component': 'VCol',
+                                'component': 'VTextField',
                                 'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextarea',
-                                        'props': {
-                                            'model': 'thresholds_str',
-                                            'label': '阈值配置',
-                                            'placeholder': '每行一个配置，格式：类型#创建时间#修改时间\n例如：\n电影#20#20\n完结动漫#100#45\n电视剧#10#90\n综艺#1#1',
-                                            'rows': 4
-                                        }
-                                    }
-                                ]
+                                    'model': 'source_dir',
+                                    'label': '源目录',
+                                    'placeholder': '输入源目录路径'
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                'component': 'VRow',
+                'content': [
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12
+                        },
+                        'content': [
+                            {
+                                'component': 'VTextField',
+                                'props': {
+                                    'model': 'target_dir',
+                                    'label': '目标目录',
+                                    'placeholder': '输入目标目录路径'
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                'component': 'VRow',
+                'content': [
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12
+                        },
+                        'content': [
+                            {
+                                'component': 'VTextField',
+                                'props': {
+                                    'model': 'cron',
+                                    'label': '执行周期',
+                                    'placeholder': '5位cron表达式，默认：5 1 * * *'
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                'component': 'VRow',
+                'content': [
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12
+                        },
+                        'content': [
+                            {
+                                'component': 'VTextarea',
+                                'props': {
+                                    'model': 'thresholds_str',
+                                    'label': '阈值配置',
+                                    'placeholder': '每行一个配置，格式：类型#创建时间#修改时间\n例如：\n电影#20#20\n完结动漫#100#45\n电视剧#10#90\n综艺#1#1',
+                                    'rows': 6,
+                                    'persistent-placeholder': True
+                                }
                             }
                         ]
                     }
