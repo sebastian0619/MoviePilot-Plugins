@@ -25,6 +25,7 @@ class AnimeMonitor(_PluginBase):
     plugin_config_prefix = "anime_monitor_"
     plugin_order = 20
     auth_level = 1
+    plugin_icon = "anime.png"
 
     def __init__(self):
         super().__init__()
