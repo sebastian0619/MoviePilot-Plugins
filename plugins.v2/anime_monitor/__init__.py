@@ -9,6 +9,11 @@ from app.schemas.types import EventType, NotificationType, MediaType
 from app.schemas import MessageChannel
 from app.utils.string import StringUtils
 from app.modules.themoviedb.category import CategoryHelper
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AnimeMonitor(_PluginBase):
     # 插件信息
@@ -31,17 +36,32 @@ class AnimeMonitor(_PluginBase):
         """
         插件初始化
         """
-        if config:
-            self._enabled = config.get("enabled", True)
-            self._category_name = config.get("category_name", "连载动漫")  # 从配置中读取分类名称
-            self._cron = config.get("cron", "0 0 * * *")  # 从配置中读取cron表达式
-        else:
-            self._enabled = False
-            self._category_name = "连载动漫"
-            self._cron = "0 0 * * *"
-        
-        # 确保CategoryHelper正确初始化
-        self.category_helper = CategoryHelper()
+        try:
+            if config:
+                self._enabled = config.get("enabled", True)
+                self._category_name = config.get("category_name", "连载动漫")
+                self._cron = config.get("cron", "0 0 * * *")
+            else:
+                self._enabled = False
+                self._category_name = "连载动漫"
+                self._cron = "0 0 * * *"
+            
+            self.category_helper = CategoryHelper()
+            
+            if self._enabled and self._cron:
+                try:
+                    self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                    self._scheduler.add_job(func=self.check_anime_update,
+                                          trigger=CronTrigger.from_crontab(self._cron),
+                                          name="动漫更新检查")
+                    if self._scheduler.get_jobs():
+                        self._scheduler.print_jobs()
+                        self._scheduler.start()
+                        logger.info(f"周期任务已启动，执行周期：{self._cron}")
+                except Exception as err:
+                    logger.error(f"周期任务启动失败：{str(err)}")
+        except Exception as e:
+            logger.error(f"插件初始化失败: {str(e)}")
 
     def get_state(self) -> bool:
         """
