@@ -36,7 +36,7 @@
     }
   },
   "MediaArchive": {
-    "name": "媒体文件归档（先不要用）",
+    "name": "媒体文件归档",
     "description": "自动将满足条件的媒体文件从源目录归档到目标目录(适合本地归档备份到网盘的情形)",
     "version": "1.1",
     "icon": "emby.png",
@@ -50,7 +50,7 @@
     }
   },
   "Anime_Monitor": {
-    "name": "Anime Monitor（先不要用）",
+    "name": "Anime Monitor",
     "description": "Anime Monitor",
     "labels": "媒体库",
     "version": "1.0",
