@@ -15,8 +15,8 @@ class AnimeMonitor(_PluginBase):
     plugin_name = "动漫更新提醒"
     plugin_desc = "监控订阅的连载动漫是否有新剧集更新"
     plugin_version = "1.0"
-    plugin_author = "your_name"
-    plugin_author_url = "https://github.com/your_name"
+    plugin_author = "Sebastian0619"
+    plugin_author_url = "https://github.com/Sebastian0619"
     plugin_order = 20
     auth_level = 1
 

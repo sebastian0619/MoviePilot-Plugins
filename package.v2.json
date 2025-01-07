@@ -50,8 +50,8 @@
     }
   },
   "Anime_Monitor": {
-    "name": "Anime Monitor",
-    "description": "Anime Monitor",
+    "name": "动漫更新提醒",
+    "description": "监控订阅的连载动漫是否有新剧集更新",
     "labels": "媒体库",
     "version": "1.0",
     "icon": "emby.png",
