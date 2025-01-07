@@ -4,6 +4,7 @@ BangumiArchive插件
 """
 from typing import Any, Dict, List, Tuple, Optional
 from app.core.config import settings
+from app.core.meta import MetaBase
 from app.core.event import eventmanager, Event, EventType
 from app.core.context import Context, MediaInfo
 from app.plugins import _PluginBase
@@ -30,7 +31,7 @@ class BangumiArchive(_PluginBase):
     # 插件基础信息
     plugin_name = "连载番剧归档"
     plugin_desc = "自动检测连载目录中的番剧，识别完结情况并归档到完结目录"
-    plugin_version = "1.3"
+    plugin_version = "1.7"
     plugin_icon = "emby.png"
     plugin_author = "Sebastian0619"
     author_url = "https://github.com/sebastian0619"
@@ -50,6 +51,14 @@ class BangumiArchive(_PluginBase):
 
     # 状态常量定义
     END_STATUS = {"Ended", "Canceled"}
+    
+    # 状态映射
+    STATUS_MAPPING = {
+        "unknown": "未知",
+        "Ended": "已完结",
+        "Canceled": "已取消",
+        "Returning Series": "连载中"
+    }
     
     # 在类中初始化
     meta_helper = None
@@ -426,7 +435,7 @@ class BangumiArchive(_PluginBase):
                     "target": target,
                     "old_status": old_status,
                     "new_status": new_status,
-                    "transfer_type": "airing_to_end" if new_status in self.END_STATUS else "end_to_airing"
+                    "transfer_type": "airing_to_end" if old_status == "Returning Series" else "end_to_airing"
                 }
                 
                 # 获取现有历史记录
@@ -442,9 +451,14 @@ class BangumiArchive(_PluginBase):
                 logger.info(f"已写入历史记录: {os.path.basename(source)} - {history['transfer_type']}")
                 
                 # 添加到通知消息
-                transfer_type = "airing_to_end" if new_status in self.END_STATUS else "end_to_airing"
+                transfer_type = history['transfer_type']
+                operation_type = (
+                    "完结归档" if (old_status == "Returning Series" and new_status == "Ended") or (old_status == "unknown" and new_status == "Ended")
+                    else "恢复连载" if (old_status == "Ended" and new_status == "Returning Series") or (old_status == "unknown" and new_status == "Returning Series")
+                    else f"状态变更 ({self.STATUS_MAPPING.get(old_status, old_status)} -> {self.STATUS_MAPPING.get(new_status, new_status)})"
+                )
                 self._transfer_messages[transfer_type].append(
-                    f"《{os.path.basename(source)}》: {self.__get_transfer_reason(old_status, new_status)}"
+                    f"《{os.path.basename(source)}》: {operation_type}"
                 )
                 
         except Exception as e:
@@ -618,19 +632,58 @@ class BangumiArchive(_PluginBase):
             match = re.search(r"(.+?)(?:\s+\(\d{4}\))?$", media_name)
             if match:
                 media_name = match.group(1).strip()
-                media_info = self.recognize_help(media_name)
+                year = None
+                
+                # 尝试提取年份
+                year_match = re.search(r"\((\d{4})\)", os.path.basename(path))
+                if year_match:
+                    year = year_match.group(1)
+                
+                # 创建 MetaBase 对象，设置完整的元数据
+                meta = MetaBase(title=media_name)
+                meta.type = MediaType.TV
+                meta.name = media_name  # 设置 name 属性
+                if year:
+                    meta.year = year
+                
+                # 使用 mediachain 的 recognize_by_meta 方法
+                media_info = self.mediachain.recognize_by_meta(meta)
                 if media_info:
                     tmdb_id = media_info.tmdb_id
                     if tmdb_id:
                         logger.debug(f"从目录名称识别到TMDB ID: {tmdb_id}")
                         return tmdb_id
-            
+                
+                # 如果第一次识别失败，尝试使用 mediachain 的 recognize_by_path 方法
+                if not media_info:
+                    logger.info(f"尝试使用路径识别: {path}")
+                    context = self.mediachain.recognize_by_path(path)
+                    if context and context.media_info:
+                        tmdb_id = context.media_info.tmdb_id
+                        if tmdb_id:
+                            logger.debug(f"从路径识别到TMDB ID: {tmdb_id}")
+                            return tmdb_id
+                
             logger.warning(f"无法识别媒体: {media_name}")
             return None
             
         except Exception as e:
             logger.error(f"获取TMDB ID失败: {str(e)}")
             return None
+
+    def __get_last_status(self, tmdb_id: int) -> str:
+        """
+        获取最近一次的状态
+        """
+        try:
+            # 获取最近的移动记录
+            last_history = self.__get_last_history(tmdb_id)
+            if last_history:
+                return last_history.get("new_status", "unknown")
+            return "unknown"
+        except Exception as e:
+            logger.error(f"获取最近状态失败: {str(e)}")
+            return "unknown"
 
     def _get_media_info(self, tmdb_id: int, path: str = None, retry_count: int = 3) -> Optional[Dict]:
         """
@@ -1017,11 +1070,13 @@ class BangumiArchive(_PluginBase):
                                                         },
                                                         {
                                                             'component': 'td',
-                                                            'text': "完结归档" if history.get("transfer_type") == "airing_to_end" else "恢复连载"
+                                                            'text': (lambda old, new: "完结归档" if (old == "Returning Series" and new == "Ended") or (old == "unknown" and new == "Ended")
+                                                                   else "恢复连载" if (old == "Ended" and new == "Returning Series") or (old == "unknown" and new == "Returning Series")
+                                                                   else f"状态变更 ({self.STATUS_MAPPING.get(old, old)} -> {self.STATUS_MAPPING.get(new, new)})")(history.get('old_status', 'unknown'), history.get('new_status', 'unknown'))
                                                         },
                                                         {
                                                             'component': 'td',
-                                                            'text': f"{history.get('old_status', '未知')} -> {history.get('new_status', '未知')}"
+                                                            'text': f"{self.STATUS_MAPPING.get(history.get('old_status', 'unknown'), '未知')} -> {self.STATUS_MAPPING.get(history.get('new_status', 'unknown'), '未知')}"
                                                         }
                                                     ]
                                                 } for history in sorted(transfer_histories,
@@ -1183,6 +1238,34 @@ class BangumiArchive(_PluginBase):
                     
         except Exception as e:
             logger.error(f"验证历史记录格式失败: {str(e)}")
+
+    def __need_transfer(self, tmdb_id: int, new_status: str) -> bool:
+        """
+        判断是否需要转移
+        """
+        # 获取最近的移动记录
+        last_history = self.__get_last_history(tmdb_id)
+        
+        # 获取上次检查时间
+        last_check = self._last_check_time.get(tmdb_id)
+        now = datetime.now()
+        
+        # 如果最近24小时内检查过，跳过
+        if last_check and (now - last_check).total_seconds() < 24 * 3600:
+            return False
+        
+        # 更新检查时间
+        self._last_check_time[tmdb_id] = now
+        
+        # 如果没有历史记录，需要移动
+        if not last_history:
+            return True
+        
+        # 如果状态发生变化，需要移动
+        if last_history.get("new_status", "").lower() != new_status.lower():
+            return True
+        
+        return False
 
 class TransferHistory:
     def __init__(self):
