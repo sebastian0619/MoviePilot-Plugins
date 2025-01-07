@@ -30,5 +30,18 @@
       "v1.1": "修复了部分错误，优化了代码结构",
       "v1.0": "首次发布，支持自动添加季度标签"
     }
+  },
+  "Anime_Monitor": {
+    "name": "Anime Monitor",
+    "description": "Anime Monitor",
+    "labels": "媒体库",
+    "version": "1.0",
+    "icon": "emby.png",
+    "author": "Sebastian0619",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.0": "首次发布，定时获取动漫信息，储存到本地供调用"
+    }
   }
 }
