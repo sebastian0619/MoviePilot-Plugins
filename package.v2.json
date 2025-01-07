@@ -35,31 +35,31 @@
       "v1.0": "首次发布，支持自动添加季度标签"
     }
   },
-<<<<<<< HEAD
-  "Anime_Monitor": {
-    "name": "Anime Monitor",
-    "description": "Anime Monitor",
-    "labels": "媒体库",
-    "version": "1.0",
-=======
   "MediaArchive": {
-    "name": "媒体文件归档",
+    "name": "媒体文件归档（先不要用）",
     "description": "自动将满足条件的媒体文件从源目录归档到目标目录(适合本地归档备份到网盘的情形)",
     "version": "1.1",
->>>>>>> 94bddfa90b6b75343bec076250c41cba5e20d29d
     "icon": "emby.png",
     "author": "Sebastian0619",
     "level": 2,
     "v2": true,
-<<<<<<< HEAD
-    "history": {
-      "v1.0": "首次发布，定时获取动漫信息，储存到本地供调用"
-=======
     "labels": "媒体库",
     "history": {
       "v1.1": "优化配置界面，支持多组阈值配置，改进配置项的显示效果",
       "v1.0": "首次发布，支持基础归档功能，支持多种媒体类型，支持测试模式和定时任务"
->>>>>>> 94bddfa90b6b75343bec076250c41cba5e20d29d
+    }
+  },
+  "Anime_Monitor": {
+    "name": "Anime Monitor（先不要用）",
+    "description": "Anime Monitor",
+    "labels": "媒体库",
+    "version": "1.0",
+    "icon": "emby.png",
+    "author": "Sebastian0619",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.0": "首次发布，定时获取动漫信息，储存到本地供调用"
     }
   }
 }
