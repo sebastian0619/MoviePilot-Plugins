@@ -17,6 +17,7 @@ class AnimeMonitor(_PluginBase):
     plugin_version = "1.0"
     plugin_author = "Sebastian0619"
     plugin_author_url = "https://github.com/Sebastian0619"
+    plugin_config_prefix = "anime_monitor_"
     plugin_order = 20
     auth_level = 1
 
