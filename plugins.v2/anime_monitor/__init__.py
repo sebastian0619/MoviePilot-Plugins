@@ -30,7 +30,17 @@ class AnimeMonitor(_PluginBase):
         """
         插件初始化
         """
-        self._enabled = True
+        if config:
+            self._enabled = config.get("enabled", True)
+            self._category_name = config.get("category_name", "连载动漫")  # 从配置中读取分类名称
+            self._cron = config.get("cron", "0 0 * * *")  # 从配置中读取cron表达式
+        else:
+            self._enabled = False
+            self._category_name = "连载动漫"
+            self._cron = "0 0 * * *"
+        
+        # 确保CategoryHelper正确初始化
+        self.category_helper = CategoryHelper()
 
     def get_state(self) -> bool:
         """
@@ -57,7 +67,72 @@ class AnimeMonitor(_PluginBase):
         return []
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
-        return [], {}
+        return [
+            {
+                "component": "VForm",
+                "content": [
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'enabled',
+                                            'label': '启用插件'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'category_name',
+                                            'label': '分类名称',
+                                            'placeholder': '输入要监控的分类名称'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'cron',
+                                            'label': '执行周期',
+                                            'placeholder': '5位cron表达式'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ], {
+            "enabled": False,
+            "category_name": "连载动漫",
+            "cron": "0 0 * * *"
+        }
 
     def get_page(self) -> List[dict]:
         return []
@@ -72,8 +147,7 @@ class AnimeMonitor(_PluginBase):
             "trigger": "cron",
             "func": self.check_anime_update,
             "kwargs": {
-                "hour": 0,
-                "minute": 0
+                "cron": self._cron
             }
         }]
 
@@ -85,12 +159,8 @@ class AnimeMonitor(_PluginBase):
             return
 
         try:
-            # 获取连载动漫分类配置
-            if not self.category_helper.is_tv_category:
-                return
-            
-            # 找到连载动漫的分类配置
-            anime_category = "连载动漫"
+            # 使用配置中的分类名称
+            anime_category = self._category_name
             
             # 获取今天的日期
             today = date.today().strftime('%Y-%m-%d')
@@ -104,7 +174,7 @@ class AnimeMonitor(_PluginBase):
             
             # 遍历订阅
             for subscribe in subscribes:
-                # 只处理电视剧类型且分类为连载动漫的订阅
+                # 只处理电视剧类型且分类为配置中的分类名称的订阅
                 if subscribe.type != MediaType.TV or self.category_helper.get_tv_category(subscribe) != anime_category:
                     continue
                 
