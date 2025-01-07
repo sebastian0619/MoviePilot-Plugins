@@ -86,7 +86,7 @@ class AnimeMonitor(_PluginBase):
         }]
 
     def get_api(self) -> List[Dict[str, Any]]:
-        return []
+        pass
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         return [
@@ -157,7 +157,7 @@ class AnimeMonitor(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        return []
+        pass
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
